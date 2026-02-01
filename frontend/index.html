@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>论文分析</title>
+    <!-- Markdown 渲染 -->
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <!-- KaTeX 数学公式 -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #f0f2f5;
+            --card-bg: white;
+            --card-border: rgba(0,0,0,0.05);
+            --card-shadow: rgba(0,0,0,0.08);
+            --title-color: #1a1a2e;
+            --text-color: #4a4a4a;
+            --text-secondary: #666;
+            --code-bg: #f8f9fa;
+            --code-color: #e83e8c;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root {
+                --bg-color: #1a1a2e;
+                --card-bg: #252542;
+                --card-border: rgba(255,255,255,0.1);
+                --card-shadow: rgba(0,0,0,0.3);
+                --title-color: #f0f0f0;
+                --text-color: #d0d0d0;
+                --text-secondary: #a0a0a0;
+                --code-bg: #1e1e3f;
+                --code-color: #ff79c6;
+            }
+        }
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: var(--bg-color);
+            min-height: 100vh;
+            transition: background 0.3s;
+        }
+        .header {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
+            padding: 40px 20px;
+            text-align: center;
+            color: white;
+            margin-bottom: 24px;
+            position: relative;
+            overflow: hidden;
+        }
+        .header h1 {
+            font-size: 1.8em;
+            font-weight: 600;
+            margin-bottom: 8px;
+        }
+        .header p {
+            opacity: 0.9;
+            font-size: 0.95em;
+        }
+        .badges {
+            margin-top: 16px;
+            display: flex;
+            justify-content: center;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .badges a img {
+            height: 22px;
+            transition: transform 0.2s;
+        }
+        .badges a:hover img {
+            transform: scale(1.1);
+        }
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 0 20px 40px;
+        }
+        .card {
+            background: var(--card-bg);
+            border-radius: 16px;
+            padding: 28px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 12px var(--card-shadow);
+            border: 1px solid var(--card-border);
+            transition: background 0.3s;
+        }
+        .paper-title {
+            font-size: 1.5em;
+            font-weight: 700;
+            color: var(--title-color);
+            margin-bottom: 16px;
+            line-height: 1.4;
+        }
+        .keywords {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .keyword {
+            background: linear-gradient(135deg, #f6d36515, #fda08515);
+            color: #e67e22;
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 500;
+            border: 1px solid #f6d36550;
+        }
+        .abstract {
+            color: #4a4a4a;
+            line-height: 1.8;
+            margin-bottom: 20px;
+            font-size: 0.95em;
+        }
+        .links {
+            display: flex;
+            gap: 12px;
+            flex-wrap: wrap;
+        }
+        .link-btn {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 20px;
+            border-radius: 8px;
+            text-decoration: none;
+            font-size: 0.9em;
+            font-weight: 500;
+            transition: all 0.2s ease;
+        }
+        .link-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+        .link-btn.openreview {
+            background: linear-gradient(135deg, #f6d365, #fda085);
+            color: white;
+        }
+        .link-btn.pdf {
+            background: linear-gradient(135deg, #a8e063, #56ab2f);
+            color: white;
+        }
+        .section-title {
+            font-size: 1.15em;
+            font-weight: 600;
+            color: var(--title-color);
+            margin-bottom: 20px;
+            padding-bottom: 12px;
+            border-bottom: 2px solid linear-gradient(135deg, #667eea, #764ba2);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        .section-title::before {
+            content: '';
+            width: 4px;
+            height: 20px;
+            background: linear-gradient(135deg, #f6d365, #fda085);
+            border-radius: 2px;
+        }
+        .llm-response {
+            color: #3a3a3a;
+            line-height: 1.9;
+            font-size: 0.95em;
+        }
+        .llm-response p { margin-bottom: 14px; }
+        .llm-response ul, .llm-response ol { margin: 14px 0; padding-left: 28px; }
+        .llm-response li { margin-bottom: 8px; }
+        .llm-response code {
+            background: #f8f9fa;
+            padding: 3px 8px;
+            border-radius: 6px;
+            font-size: 0.88em;
+            color: #e83e8c;
+        }
+        .llm-response pre {
+            background: #f8f9fa;
+            padding: 16px;
+            border-radius: 10px;
+            overflow-x: auto;
+            border: 1px solid #e9ecef;
+        }
+        .llm-response pre code { background: none; padding: 0; color: #333; }
+        .llm-response a { color: #e67e22; }
+        .llm-response blockquote {
+            border-left: 4px solid #f6d365;
+            padding-left: 16px;
+            margin: 16px 0;
+            color: #666;
+        }
+        .loading {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            color: #666;
+            padding: 8px 0;
+        }
+        .spinner {
+            width: 22px;
+            height: 22px;
+            border: 2.5px solid #e9ecef;
+            border-top-color: #f6d365;
+            border-radius: 50%;
+            animation: spin 0.8s linear infinite;
+        }
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+        .error {
+            color: #dc3545;
+            padding: 16px 20px;
+            background: #fff5f5;
+            border-radius: 10px;
+            border: 1px solid #ffebeb;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>Paper Insight</h1>
+        <p>AI 驱动的学术论文智能分析</p>
+        <div class="badges">
+            <a href="https://github.com/KMnO4-zx" target="_blank">
+                <img src="https://img.shields.io/badge/GitHub-KMnO4--zx-181717?logo=github" alt="GitHub">
+            </a>
+            <a href="https://www.zhihu.com/people/feng-qi-xia-pian" target="_blank">
+                <img src="https://img.shields.io/badge/知乎-不要葱姜蒜-0084ff?logo=zhihu" alt="知乎">
+            </a>
+            <a href="https://www.xiaohongshu.com/user/profile/63c2055e000000002502c58c" target="_blank">
+                <img src="https://img.shields.io/badge/小红书-不要葱姜蒜-fe2c55" alt="小红书">
+            </a>
+        </div>
+    </div>
+    <div class="container">
+        <div class="card" id="paper-card">
+            <div class="loading" id="paper-loading">
+                <div class="spinner"></div>
+                <span>加载论文信息...</span>
+            </div>
+            <div id="paper-content" style="display: none;">
+                <h1 class="paper-title" id="paper-title"></h1>
+                <div class="keywords" id="keywords"></div>
+                <p class="abstract" id="abstract"></p>
+                <div class="links">
+                    <a class="link-btn openreview" id="openreview-link" target="_blank">OpenReview</a>
+                    <a class="link-btn pdf" id="pdf-link" target="_blank">PDF</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2 class="section-title">AI 分析</h2>
+            <div id="llm-container">
+                <div class="loading" id="llm-loading">
+                    <div class="spinner"></div>
+                    <span>正在分析论文...</span>
+                </div>
+                <div class="llm-response" id="llm-response"></div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const paperId = new URLSearchParams(window.location.search).get('id');
+
+        // 渲染 Markdown 和数学公式
+        function renderMarkdown(text, element) {
+            element.innerHTML = marked.parse(text);
+            renderMathInElement(element, {
+                delimiters: [
+                    {left: '$$', right: '$$', display: true},
+                    {left: '$', right: '$', display: false},
+                    {left: '\\[', right: '\\]', display: true},
+                    {left: '\\(', right: '\\)', display: false}
+                ],
+                throwOnError: false
+            });
+        }
+
+        if (!paperId) {
+            document.getElementById('paper-loading').innerHTML = '<div class="error">请提供论文 ID，例如: ?id=uq6UWRgzMr</div>';
+            document.getElementById('llm-loading').style.display = 'none';
+        } else {
+            fetchPaperInfo();
+            fetchAnalysis();
+        }
+
+        async function fetchPaperInfo() {
+            try {
+                const res = await fetch(`/paper/${paperId}/info`);
+                if (!res.ok) {
+                    throw new Error('论文未找到');
+                }
+                const data = await res.json();
+
+                document.getElementById('paper-title').textContent = data.title || '无标题';
+
+                const abstractEl = document.getElementById('abstract');
+                renderMarkdown(data.abstract || '无摘要', abstractEl);
+
+                const keywordsEl = document.getElementById('keywords');
+                const keywords = data.keywords || [];
+                keywordsEl.innerHTML = keywords.map(k => `<span class="keyword">${k}</span>`).join('');
+
+                document.getElementById('openreview-link').href = `https://openreview.net/forum?id=${paperId}`;
+                document.getElementById('pdf-link').href = data.pdf || '#';
+
+                document.getElementById('paper-loading').style.display = 'none';
+                document.getElementById('paper-content').style.display = 'block';
+            } catch (e) {
+                document.getElementById('paper-loading').innerHTML = `<div class="error">加载失败: ${e.message}</div>`;
+            }
+        }
+
+        function fetchAnalysis() {
+            const responseEl = document.getElementById('llm-response');
+            const loadingEl = document.getElementById('llm-loading');
+            const statusText = loadingEl.querySelector('span');
+            let fullText = '';
+
+            const eventSource = new EventSource(`/paper/${paperId}`);
+
+            // 处理状态消息
+            eventSource.addEventListener('status', (event) => {
+                statusText.textContent = event.data;
+            });
+
+            // 处理错误消息
+            eventSource.addEventListener('error', (event) => {
+                eventSource.close();
+                loadingEl.innerHTML = `<div class="error">${event.data}</div>`;
+            });
+
+            // 处理 LLM 响应
+            eventSource.onmessage = (event) => {
+                loadingEl.style.display = 'none';
+                fullText += event.data;
+                responseEl.textContent = fullText;
+            };
+
+            eventSource.onerror = () => {
+                eventSource.close();
+                if (fullText) {
+                    renderMarkdown(fullText, responseEl);
+                } else if (!loadingEl.querySelector('.error')) {
+                    loadingEl.innerHTML = '<div class="error">连接失败，请稍后重试</div>';
+                }
+            };
+        }
+    </script>
+</body>
+</html>
