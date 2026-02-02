@@ -8,5 +8,6 @@ dependencies = [
     "python-dotenv>=1.2.1",
     "requests>=2.32.5",
     "sse-starlette>=3.2.0",
+    "supabase>=2.27.2",
     "uvicorn>=0.40.0",
 ]

@@ -1,78 +1,42 @@
-import sqlite3
-import json
-from pathlib import Path
+import os
+from supabase import create_client
 
-DB_PATH = Path(__file__).parent / "papers.db"
+SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
+SUPABASE_KEY = os.getenv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY")
 
-
-def get_connection():
-    return sqlite3.connect(DB_PATH)
-
-
-def init_db():
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS papers (
-            id TEXT PRIMARY KEY,
-            title TEXT,
-            abstract TEXT,
-            keywords TEXT,
-            pdf TEXT,
-            llm_response TEXT
-        )
-    """)
-    conn.commit()
-    conn.close()
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 
 
 def get_paper(paper_id: str) -> dict | None:
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM papers WHERE id = ?", (paper_id,))
-    row = cursor.fetchone()
-    conn.close()
-
-    if not row:
+    if not supabase:
         return None
 
-    return {
-        "id": row[0],
-        "title": row[1],
-        "abstract": row[2],
-        "keywords": json.loads(row[3]) if row[3] else [],
-        "pdf": row[4],
-        "llm_response": row[5]
-    }
+    result = supabase.table("papers").select("*").eq("id", paper_id).execute()
+
+    if not result.data:
+        return None
+
+    return result.data[0]
 
 
 def save_paper(paper_info: dict, llm_response: str = None):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute("""
-        INSERT OR REPLACE INTO papers (id, title, abstract, keywords, pdf, llm_response)
-        VALUES (?, ?, ?, ?, ?, ?)
-    """, (
-        paper_info["id"],
-        paper_info.get("title"),
-        paper_info.get("abstract"),
-        json.dumps(paper_info.get("keywords", [])),
-        paper_info.get("pdf"),
-        llm_response
-    ))
-    conn.commit()
-    conn.close()
+    if not supabase:
+        return
+
+    data = {
+        "id": paper_info["id"],
+        "title": paper_info.get("title"),
+        "abstract": paper_info.get("abstract"),
+        "keywords": paper_info.get("keywords", []),
+        "pdf": paper_info.get("pdf"),
+        "llm_response": llm_response
+    }
+
+    supabase.table("papers").upsert(data).execute()
 
 
 def update_llm_response(paper_id: str, response: str):
-    conn = get_connection()
-    cursor = conn.cursor()
-    cursor.execute(
-        "UPDATE papers SET llm_response = ? WHERE id = ?",
-        (response, paper_id)
-    )
-    conn.commit()
-    conn.close()
+    if not supabase:
+        return
 
-
-init_db()
+    supabase.table("papers").update({"llm_response": response}).eq("id", paper_id).execute()
