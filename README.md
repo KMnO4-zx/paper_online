@@ -43,10 +43,16 @@ uv run uvicorn app:app --reload --host 0.0.0.0 --port 8000
 
 打开浏览器访问：
 
+**方式一：主页输入**
+```
+http://localhost:8000/
+```
+在输入框中输入论文 ID，点击"分析"按钮。
+
+**方式二：URL 参数直接访问**
 ```
 http://localhost:8000/?id=论文ID
 ```
-
 例如：`http://localhost:8000/?id=uq6UWRgzMr`
 
 ## 停止服务

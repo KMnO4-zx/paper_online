@@ -221,6 +221,83 @@
             border-radius: 10px;
             border: 1px solid #ffebeb;
         }
+        /* 主页输入表单样式 */
+        .home-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: calc(100vh - 200px);
+            padding: 40px 20px;
+        }
+        .search-card {
+            background: var(--card-bg);
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 4px 20px var(--card-shadow);
+            border: 1px solid var(--card-border);
+            max-width: 500px;
+            width: 100%;
+            text-align: center;
+        }
+        .search-card h2 {
+            color: var(--title-color);
+            font-size: 1.4em;
+            margin-bottom: 12px;
+        }
+        .search-card p {
+            color: var(--text-secondary);
+            font-size: 0.95em;
+            margin-bottom: 28px;
+        }
+        .search-form {
+            display: flex;
+            gap: 12px;
+        }
+        .search-input {
+            flex: 1;
+            padding: 14px 18px;
+            border: 2px solid var(--card-border);
+            border-radius: 12px;
+            font-size: 1em;
+            background: var(--bg-color);
+            color: var(--text-color);
+            transition: border-color 0.2s;
+        }
+        .search-input:focus {
+            outline: none;
+            border-color: #f6d365;
+        }
+        .search-input::placeholder {
+            color: var(--text-secondary);
+        }
+        .search-btn {
+            padding: 14px 28px;
+            background: linear-gradient(135deg, #f6d365, #fda085);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        .search-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 15px rgba(246, 211, 101, 0.4);
+        }
+        .example-text {
+            margin-top: 20px;
+            font-size: 0.85em;
+            color: var(--text-secondary);
+        }
+        .example-text a {
+            color: #e67e22;
+            text-decoration: none;
+        }
+        .example-text a:hover {
+            text-decoration: underline;
+        }
     </style>
 </head>
 <body>
@@ -239,7 +316,23 @@
             </a>
         </div>
     </div>
-    <div class="container">
+    <!-- 主页输入表单 -->
+    <div class="home-container" id="home-section" style="display: none;">
+        <div class="search-card">
+            <h2>输入论文 ID</h2>
+            <p>请输入 OpenReview 论文 ID 开始分析</p>
+            <form class="search-form" id="search-form">
+                <input type="text" class="search-input" id="paper-id-input"
+                       placeholder="例如: uq6UWRgzMr" required>
+                <button type="submit" class="search-btn">分析</button>
+            </form>
+            <p class="example-text">
+                示例: <a href="?id=uq6UWRgzMr">uq6UWRgzMr</a>
+            </p>
+        </div>
+    </div>
+
+    <div class="container" id="analysis-section" style="display: none;">
         <div class="card" id="paper-card">
             <div class="loading" id="paper-loading">
                 <div class="spinner"></div>
@@ -286,9 +379,22 @@
         }
 
         if (!paperId) {
-            document.getElementById('paper-loading').innerHTML = '<div class="error">请提供论文 ID，例如: ?id=uq6UWRgzMr</div>';
-            document.getElementById('llm-loading').style.display = 'none';
+            // 显示主页输入表单
+            document.getElementById('home-section').style.display = 'flex';
+            document.getElementById('analysis-section').style.display = 'none';
+
+            // 处理表单提交
+            document.getElementById('search-form').addEventListener('submit', function(e) {
+                e.preventDefault();
+                const inputId = document.getElementById('paper-id-input').value.trim();
+                if (inputId) {
+                    window.location.href = '?id=' + encodeURIComponent(inputId);
+                }
+            });
         } else {
+            // 显示分析页面
+            document.getElementById('home-section').style.display = 'none';
+            document.getElementById('analysis-section').style.display = 'block';
             fetchPaperInfo();
             fetchAnalysis();
         }
