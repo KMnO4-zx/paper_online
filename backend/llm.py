@@ -39,7 +39,7 @@ class BaseLLM:
                 yield content
     
 class SiliconflowLLM(BaseLLM):
-    def __init__(self, api_key: str = None, base_url: str = None, model: str = "deepseek-ai/DeepSeek-V3.2"):
+    def __init__(self, api_key: str = None, base_url: str = None, model: str = "Pro/deepseek-ai/DeepSeek-V3.2"):
         self.api_key = api_key if api_key else os.getenv("SILICONFLOW_API_KEY")
         self.base_url = base_url if base_url else "https://api.siliconflow.cn/v1"
         self.model = model
