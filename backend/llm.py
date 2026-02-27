@@ -44,10 +44,17 @@ class SiliconflowLLM(BaseLLM):
         self.base_url = base_url if base_url else "https://api.siliconflow.cn/v1"
         self.model = model
         self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
+
+class OpenRouterLLM(BaseLLM):
+    def __init__(self, api_key: str = None, base_url: str = None, model: str = "stepfun/step-3.5-flash:free"):
+        self.api_key = api_key if api_key else os.getenv("OPEN_ROUTER_API_KEY")
+        self.base_url = base_url if base_url else "https://openrouter.ai/api/v1"
+        self.model = model
+        self.client = OpenAI(api_key=self.api_key, base_url=self.base_url)
         
 
 if __name__ == "__main__":
-    llm = SiliconflowLLM()
+    llm = OpenRouterLLM()
     prompt = "请简要介绍一下Transformer模型。"
     response = llm.get_response(prompt)
     print("Response:", response)

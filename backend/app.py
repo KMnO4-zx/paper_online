@@ -7,7 +7,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse
 from sse_starlette.sse import EventSourceResponse
 
-from llm import SiliconflowLLM
+from llm import SiliconflowLLM, OpenRouterLLM
 from utils import reader, get_openreview_info, ReaderError, OpenReviewError
 from database import get_paper, save_paper, update_llm_response
 
@@ -21,7 +21,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-llm = SiliconflowLLM()
+llm = OpenRouterLLM()
 
 
 @app.get("/paper/{paper_id}/info")
