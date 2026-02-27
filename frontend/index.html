@@ -350,7 +350,10 @@
         </div>
 
         <div class="card">
-            <h2 class="section-title">AI 分析</h2>
+            <div style="display: flex; align-items: center; justify-content: space-between;">
+                <h2 class="section-title" style="margin-bottom: 0; padding-bottom: 12px;">AI 分析</h2>
+                <a class="link-btn openreview" id="reanalyze-btn" style="display: none; cursor: pointer; font-size: 0.8em; padding: 6px 14px;" onclick="reanalyze()">重新分析</a>
+            </div>
             <div id="llm-container">
                 <div class="loading" id="llm-loading">
                     <div class="spinner"></div>
@@ -426,13 +429,23 @@
             }
         }
 
-        function fetchAnalysis() {
+        function reanalyze() {
+            document.getElementById('reanalyze-btn').style.display = 'none';
+            document.getElementById('llm-response').innerHTML = '';
+            const loadingEl = document.getElementById('llm-loading');
+            loadingEl.style.display = 'flex';
+            loadingEl.innerHTML = '<div class="spinner"></div><span>正在重新分析论文...</span>';
+            fetchAnalysis(true);
+        }
+
+        function fetchAnalysis(reanalyze = false) {
             const responseEl = document.getElementById('llm-response');
             const loadingEl = document.getElementById('llm-loading');
             const statusText = loadingEl.querySelector('span');
             let fullText = '';
 
-            const eventSource = new EventSource(`/paper/${paperId}`);
+            const url = reanalyze ? `/paper/${paperId}?reanalyze=true` : `/paper/${paperId}`;
+            const eventSource = new EventSource(url);
 
             // 处理状态消息
             eventSource.addEventListener('status', (event) => {
@@ -456,6 +469,7 @@
                 eventSource.close();
                 if (fullText) {
                     renderMarkdown(fullText, responseEl);
+                    document.getElementById('reanalyze-btn').style.display = 'inline-flex';
                 } else if (!loadingEl.querySelector('.error')) {
                     loadingEl.innerHTML = '<div class="error">连接失败，请稍后重试</div>';
                 }

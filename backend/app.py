@@ -39,10 +39,10 @@ async def get_paper_info(paper_id: str):
 
 
 @app.get("/paper/{paper_id}")
-async def get_paper_analysis(paper_id: str):
+async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
     # Check cache first
     cached = get_paper(paper_id)
-    if cached and cached.get("llm_response"):
+    if not reanalyze and cached and cached.get("llm_response"):
         async def cached_stream():
             yield {"data": cached["llm_response"]}
         return EventSourceResponse(cached_stream())

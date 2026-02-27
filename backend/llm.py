@@ -1,6 +1,6 @@
 from openai import OpenAI
 import os
-from prompt import SYSTEM_PROMPT
+from prompt import PAPER_ANALYSIS_PROMPT
 
 from dotenv import load_dotenv, find_dotenv
 _ = load_dotenv(find_dotenv())
@@ -16,8 +16,8 @@ class BaseLLM:
             model=self.model,
             temperature=1.0,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": "You are a helpful assistant for academic research."},
+                {"role": "user", "content": prompt + "\n\n" + PAPER_ANALYSIS_PROMPT}
             ],
         **kwargs)
         return response.choices[0].message.content
@@ -28,8 +28,8 @@ class BaseLLM:
             temperature=1.0,
             stream=True,
             messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": prompt}
+                {"role": "system", "content": "You are a helpful assistant for academic research."},
+                {"role": "user", "content": prompt + "\n\n" + PAPER_ANALYSIS_PROMPT}
             ],
         **kwargs
         )
