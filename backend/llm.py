@@ -37,6 +37,28 @@ class BaseLLM:
             content = chunk.choices[0].delta.content
             if content:
                 yield content
+
+    def chat(self, messages: list, **kwargs) -> str:
+        response = self.client.chat.completions.create(
+            model=self.model, 
+            temperature=1.0, 
+            messages=messages, 
+            **kwargs
+        )
+        return response.choices[0].message.content
+
+    def chat_stream(self, messages: list, **kwargs):
+        response = self.client.chat.completions.create(
+            model=self.model, 
+            temperature=1.0, 
+            stream=True, 
+            messages=messages, 
+            **kwargs
+        )
+        for chunk in response:
+            content = chunk.choices[0].delta.content
+            if content:
+                yield content
     
 class SiliconflowLLM(BaseLLM):
     def __init__(self, api_key: str = None, base_url: str = None, model: str = "Pro/MiniMaxAI/MiniMax-M2.5"):

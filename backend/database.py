@@ -40,3 +40,49 @@ def update_llm_response(paper_id: str, response: str):
         return
 
     supabase.table("papers").update({"llm_response": response}).eq("id", paper_id).execute()
+
+
+def get_chat_sessions(user_id: str, paper_id: str) -> list:
+    if not supabase:
+        return []
+    result = supabase.table("chat_sessions").select("*").eq("user_id", user_id).eq("paper_id", paper_id).order("created_at", desc=True).execute()
+    return result.data or []
+
+
+def create_chat_session(session_id: str, user_id: str, paper_id: str, title: str):
+    if not supabase:
+        return
+    supabase.table("chat_sessions").insert({
+        "id": session_id, "user_id": user_id, "paper_id": paper_id, "title": title
+    }).execute()
+
+
+def get_chat_messages(session_id: str) -> list:
+    if not supabase:
+        return []
+    result = supabase.table("chat_messages").select("role, content, created_at").eq("session_id", session_id).order("created_at").execute()
+    return result.data or []
+
+
+def save_chat_message(session_id: str, role: str, content: str):
+    if not supabase:
+        return
+    supabase.table("chat_messages").insert({
+        "session_id": session_id, "role": role, "content": content
+    }).execute()
+
+
+def delete_chat_session(session_id: str):
+    if not supabase:
+        return
+    supabase.table("chat_messages").delete().eq("session_id", session_id).execute()
+    supabase.table("chat_sessions").delete().eq("id", session_id).execute()
+
+
+def delete_last_chat_message_pair(session_id: str):
+    """Delete the last user+assistant message pair from a session."""
+    if not supabase:
+        return
+    rows = supabase.table("chat_messages").select("id").eq("session_id", session_id).order("created_at", desc=True).limit(2).execute()
+    for r in (rows.data or []):
+        supabase.table("chat_messages").delete().eq("id", r["id"]).execute()
