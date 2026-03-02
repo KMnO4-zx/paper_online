@@ -360,6 +360,10 @@
             flex-direction: column;
             flex-shrink: 0;
             overflow-y: auto;
+            transition: width 0.2s, opacity 0.2s;
+        }
+        .chat-sidebar.hidden {
+            width: 0; overflow: hidden; border-left: none; opacity: 0; padding: 0;
         }
         .chat-sidebar-header {
             padding: 0 8px;
@@ -573,7 +577,10 @@
                 <div class="chat-main">
                     <div class="chat-header">
                         <h3>论文对话</h3>
-                        <button class="chat-new-btn" onclick="newChatSession()">新对话</button>
+                        <div>
+                            <button class="chat-new-btn" onclick="newChatSession()">新对话</button>
+                            <button class="chat-new-btn" onclick="toggleSidebar()">历史对话</button>
+                        </div>
                     </div>
                     <div class="chat-messages" id="chat-messages">
                         <div class="chat-empty">输入问题，开始与论文对话</div>
@@ -583,7 +590,7 @@
                         <button class="chat-send-btn" id="chat-send-btn" onclick="sendChat()">发送</button>
                     </div>
                 </div>
-                <div class="chat-sidebar">
+                <div class="chat-sidebar hidden">
                     <div class="chat-sidebar-header">
                         <span style="font-size:0.8em;color:var(--text-secondary);">历史对话</span>
                     </div>
@@ -703,6 +710,10 @@
                     loadingEl.innerHTML = '<div class="error">连接失败，请稍后重试</div>';
                 }
             };
+        }
+
+        function toggleSidebar() {
+            document.querySelector('.chat-sidebar').classList.toggle('hidden');
         }
 
         // === 聊天功能 ===
