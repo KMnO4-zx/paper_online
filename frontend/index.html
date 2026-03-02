@@ -301,7 +301,7 @@
         /* 两列布局 */
         .main-content {
             display: flex;
-            max-width: 1400px;
+            max-width: 1600px;
             margin: 0 auto;
             padding: 0 20px 40px;
             gap: 24px;
@@ -311,7 +311,9 @@
             min-width: 0;
         }
         .main-content .right-col {
-            width: 580px;
+            width: 38%;
+            min-width: 360px;
+            max-width: 620px;
             flex-shrink: 0;
         }
         /* 聊天面板 */
@@ -322,7 +324,7 @@
             box-shadow: 0 2px 12px var(--card-shadow);
             display: flex;
             flex-direction: row;
-            height: calc(100vh - 180px);
+            height: calc(100vh - 160px);
             position: sticky;
             top: 20px;
         }
@@ -467,6 +469,9 @@
             color: var(--text-color);
             resize: none;
             font-family: inherit;
+            overflow-y: auto;
+            min-height: 44px;
+            max-height: 150px;
         }
         .chat-input:focus { outline: none; border-color: #f6d365; }
         .chat-send-btn {
@@ -499,6 +504,13 @@
             justify-content: center;
             color: var(--text-secondary);
             font-size: 0.9em;
+        }
+        @media (max-width: 1100px) {
+            .main-content .right-col {
+                width: 340px;
+                min-width: 340px;
+            }
+            .chat-sidebar { width: 0; overflow: hidden; border-left: none; opacity: 0; }
         }
         @media (max-width: 900px) {
             .main-content { flex-direction: column; }
@@ -587,7 +599,7 @@
                         <div class="chat-empty">输入问题，开始与论文对话</div>
                     </div>
                     <div class="chat-input-area">
-                        <textarea class="chat-input" id="chat-input" rows="3" placeholder="输入你的问题..."></textarea>
+                        <textarea class="chat-input" id="chat-input" rows="1" placeholder="输入你的问题..."></textarea>
                         <button class="chat-send-btn" id="chat-send-btn" onclick="sendChat()">发送</button>
                     </div>
                 </div>
@@ -944,6 +956,12 @@
                 e.preventDefault();
                 sendChat();
             }
+        });
+
+        // 输入框自动撑高
+        document.getElementById('chat-input').addEventListener('input', function() {
+            this.style.height = 'auto';
+            this.style.height = this.scrollHeight + 'px';
         });
 
         // 页面加载时拉取历史 sessions
