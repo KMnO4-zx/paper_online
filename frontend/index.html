@@ -226,9 +226,73 @@
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: center;
-            min-height: calc(100vh - 200px);
-            padding: 40px 20px;
+            padding: 20px 20px 0;
+            max-width: 900px;
+            margin: 0 auto;
+        }
+        .home-container#home-section {
+            padding-top: 10px;
+            padding-bottom: 40px;
+        }
+        .recent-section {
+            width: 100%;
+        }
+        .recent-title {
+            font-size: 1.1em;
+            font-weight: 600;
+            color: var(--title-color);
+            margin-bottom: 16px;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .recent-title::before {
+            content: '';
+            width: 4px;
+            height: 18px;
+            background: linear-gradient(135deg, #f6d365, #fda085);
+            border-radius: 2px;
+        }
+        .recent-card {
+            background: var(--card-bg);
+            border-radius: 14px;
+            padding: 20px;
+            margin-bottom: 14px;
+            box-shadow: 0 2px 10px var(--card-shadow);
+            border: 1px solid var(--card-border);
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+            text-decoration: none;
+            display: block;
+        }
+        .recent-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 16px var(--card-shadow);
+        }
+        .recent-card-title {
+            font-size: 1em;
+            font-weight: 600;
+            color: var(--title-color);
+            margin-bottom: 8px;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .recent-card .keywords {
+            margin-bottom: 8px;
+        }
+        .recent-card .keyword {
+            font-size: 0.75em;
+            padding: 3px 10px;
+        }
+        .recent-card-abstract {
+            color: var(--text-secondary);
+            font-size: 0.85em;
+            line-height: 1.6;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
         }
         .search-card {
             background: var(--card-bg);
@@ -536,6 +600,13 @@
             </a>
         </div>
     </div>
+    <!-- 最近分析 -->
+    <div class="home-container" id="recent-wrapper" style="display:none;">
+        <div class="recent-section" id="recent-section">
+            <div class="recent-title">最近分析</div>
+            <div id="recent-list"></div>
+        </div>
+    </div>
     <!-- 主页输入表单 -->
     <div class="home-container" id="home-section" style="display: none;">
         <div class="search-card">
@@ -643,6 +714,21 @@
                     window.location.href = '?id=' + encodeURIComponent(inputId);
                 }
             });
+
+            // 加载最近论文
+            fetch('/papers/recent').then(r => r.json()).then(papers => {
+                if (!papers.length) return;
+                const list = document.getElementById('recent-list');
+                list.innerHTML = papers.map(p => {
+                    const kw = (p.keywords || []).slice(0, 3).map(k => `<span class="keyword">${k}</span>`).join('');
+                    return `<a class="recent-card" href="?id=${p.id}">
+                        <div class="recent-card-title">${p.title || '无标题'}</div>
+                        <div class="keywords">${kw}</div>
+                        <div class="recent-card-abstract">${p.abstract || ''}</div>
+                    </a>`;
+                }).join('');
+                document.getElementById('recent-wrapper').style.display = 'block';
+            }).catch(() => {});
         } else {
             // 显示分析页面
             document.getElementById('home-section').style.display = 'none';

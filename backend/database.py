@@ -79,6 +79,13 @@ def delete_chat_session(session_id: str):
     supabase.table("chat_sessions").delete().eq("id", session_id).execute()
 
 
+def get_recent_papers(limit: int = 3) -> list:
+    if not supabase:
+        return []
+    result = supabase.table("papers").select("id, title, abstract, keywords").order("created_at", desc=True).limit(limit).execute()
+    return result.data or []
+
+
 def delete_last_chat_message_pair(session_id: str):
     """Delete the last user+assistant message pair from a session."""
     if not supabase:

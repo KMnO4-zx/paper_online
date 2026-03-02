@@ -11,7 +11,7 @@ from pydantic import BaseModel
 
 from llm import SiliconflowLLM, OpenRouterLLM
 from utils import reader, get_openreview_info, ReaderError, OpenReviewError
-from database import get_paper, save_paper, update_llm_response, get_chat_sessions, create_chat_session, get_chat_messages, save_chat_message, delete_chat_session, delete_last_chat_message_pair
+from database import get_paper, save_paper, update_llm_response, get_chat_sessions, create_chat_session, get_chat_messages, save_chat_message, delete_chat_session, delete_last_chat_message_pair, get_recent_papers
 from chat import ChatSession
 
 app = FastAPI()
@@ -32,6 +32,11 @@ class ChatRequest(BaseModel):
     message: str
     session_id: str
     user_id: str
+
+
+@app.get("/papers/recent")
+async def recent_papers():
+    return get_recent_papers(3)
 
 
 @app.get("/paper/{paper_id}/info")
