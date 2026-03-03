@@ -275,6 +275,9 @@ async def regenerate_chat(paper_id: str, req: ChatRequest):
 
 # 静态文件服务
 FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+IMAGES_DIR = Path(__file__).parent.parent / "images"
+
+app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
 
 
 @app.get("/")
