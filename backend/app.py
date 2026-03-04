@@ -1,5 +1,6 @@
 import asyncio
 from pathlib import Path
+from datetime import datetime, timedelta
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,11 +28,33 @@ app.add_middleware(
 llm = OpenRouterLLM()
 chat_sessions: dict[str, ChatSession] = {}
 
+# 在线用户追踪
+online_users: dict[str, datetime] = {}
+ONLINE_TIMEOUT = 30
+
 
 class ChatRequest(BaseModel):
     message: str
     session_id: str
     user_id: str
+
+
+@app.post("/online/heartbeat")
+async def heartbeat(request: dict):
+    user_id = request.get("user_id")
+    if user_id:
+        online_users[user_id] = datetime.now()
+    return {"status": "ok"}
+
+
+@app.get("/online/count")
+async def get_online_count():
+    now = datetime.now()
+    timeout_threshold = now - timedelta(seconds=ONLINE_TIMEOUT)
+    active_users = {uid: ts for uid, ts in online_users.items() if ts > timeout_threshold}
+    online_users.clear()
+    online_users.update(active_users)
+    return {"count": len(online_users)}
 
 
 @app.get("/papers/recent")
@@ -60,6 +83,7 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
     if not reanalyze and cached and cached.get("llm_response"):
         async def cached_stream():
             yield {"data": cached["llm_response"]}
+            yield {"event": "done", "data": ""}
         return EventSourceResponse(cached_stream())
 
     async def generate():
@@ -125,6 +149,8 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
             update_llm_response(paper_id, response_text)
         else:
             save_paper(paper_info, response_text)
+
+        yield {"event": "done", "data": ""}
 
     return EventSourceResponse(generate())
 
@@ -193,6 +219,8 @@ async def chat_with_paper(paper_id: str, req: ChatRequest):
         # Persist messages
         save_chat_message(req.session_id, "user", req.message)
         save_chat_message(req.session_id, "assistant", "".join(chunks))
+
+        yield {"event": "done", "data": ""}
 
     return EventSourceResponse(generate())
 
@@ -270,6 +298,8 @@ async def regenerate_chat(paper_id: str, req: ChatRequest):
         save_chat_message(req.session_id, "user", req.message)
         save_chat_message(req.session_id, "assistant", "".join(chunks))
 
+        yield {"event": "done", "data": ""}
+
     return EventSourceResponse(generate())
 
 
@@ -278,6 +308,8 @@ FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 IMAGES_DIR = Path(__file__).parent.parent / "images"
 
 app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
+app.mount("/css", StaticFiles(directory=FRONTEND_DIR / "css"), name="css")
+app.mount("/js", StaticFiles(directory=FRONTEND_DIR / "js"), name="js")
 
 
 @app.get("/")
