@@ -83,6 +83,7 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
     if not reanalyze and cached and cached.get("llm_response"):
         async def cached_stream():
             yield {"data": cached["llm_response"]}
+            yield {"event": "done", "data": ""}
         return EventSourceResponse(cached_stream())
 
     async def generate():
@@ -148,6 +149,8 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
             update_llm_response(paper_id, response_text)
         else:
             save_paper(paper_info, response_text)
+
+        yield {"event": "done", "data": ""}
 
     return EventSourceResponse(generate())
 
@@ -216,6 +219,8 @@ async def chat_with_paper(paper_id: str, req: ChatRequest):
         # Persist messages
         save_chat_message(req.session_id, "user", req.message)
         save_chat_message(req.session_id, "assistant", "".join(chunks))
+
+        yield {"event": "done", "data": ""}
 
     return EventSourceResponse(generate())
 
@@ -293,6 +298,8 @@ async def regenerate_chat(paper_id: str, req: ChatRequest):
         save_chat_message(req.session_id, "user", req.message)
         save_chat_message(req.session_id, "assistant", "".join(chunks))
 
+        yield {"event": "done", "data": ""}
+
     return EventSourceResponse(generate())
 
 
@@ -301,6 +308,8 @@ FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 IMAGES_DIR = Path(__file__).parent.parent / "images"
 
 app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
+app.mount("/css", StaticFiles(directory=FRONTEND_DIR / "css"), name="css")
+app.mount("/js", StaticFiles(directory=FRONTEND_DIR / "js"), name="js")
 
 
 @app.get("/")
