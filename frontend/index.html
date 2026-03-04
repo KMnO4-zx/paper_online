@@ -100,6 +100,27 @@
             transform: translateY(-2px);
             opacity: 1;
         }
+        .online-count {
+            position: absolute;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.9em;
+            color: var(--text-secondary);
+        }
+        .online-dot {
+            width: 8px;
+            height: 8px;
+            background: #52c41a;
+            border-radius: 50%;
+            animation: pulse 2s ease-in-out infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.5; }
+        }
         .container {
             max-width: 900px;
             margin: 0 auto;
@@ -313,6 +334,7 @@
             line-height: 1.6;
             display: -webkit-box;
             -webkit-line-clamp: 2;
+            line-clamp: 2;
             -webkit-box-orient: vertical;
             overflow: hidden;
         }
@@ -627,6 +649,10 @@
             <div class="header-logo">
                 <img src="../images/logo.svg" alt="Logo">
                 Paper Insight
+            </div>
+            <div class="online-count" id="online-count">
+                <span class="online-dot"></span>
+                <span id="online-number">0</span> 人在线
             </div>
             <div class="header-links">
                 <a href="https://www.xiaohongshu.com/user/profile/63c2055e000000002502c58c" target="_blank" title="小红书">
@@ -1093,6 +1119,41 @@
 
         // 页面加载时拉取历史 sessions
         if (paperId) loadSessions();
+
+        // 在线人数统计
+        function getOrCreateUserId() {
+            let uid = localStorage.getItem('online_user_id');
+            if (!uid) {
+                uid = crypto.randomUUID();
+                localStorage.setItem('online_user_id', uid);
+            }
+            return uid;
+        }
+
+        const onlineUserId = getOrCreateUserId();
+
+        async function sendHeartbeat() {
+            try {
+                await fetch('/online/heartbeat', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({user_id: onlineUserId})
+                });
+            } catch (e) {}
+        }
+
+        async function updateOnlineCount() {
+            try {
+                const res = await fetch('/online/count');
+                const data = await res.json();
+                document.getElementById('online-number').textContent = data.count;
+            } catch (e) {}
+        }
+
+        sendHeartbeat();
+        updateOnlineCount();
+        setInterval(sendHeartbeat, 15000);
+        setInterval(updateOnlineCount, 10000);
     </script>
 </body>
 </html>
