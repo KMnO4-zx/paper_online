@@ -623,4 +623,7 @@ body {
     .header-links a img {
         height: 18px;
     }
+    .online-count {
+        display: none;
+    }
 }
