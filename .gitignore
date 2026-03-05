@@ -215,3 +215,8 @@ __marimo__/
 
 # claude
 .claude
+
+# crawler output data
+data/
+*.jsonl
+crawled_data/

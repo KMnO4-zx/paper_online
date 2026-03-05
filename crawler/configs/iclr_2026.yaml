@@ -1,0 +1,17 @@
+conference:
+  name: "ICLR 2026"
+  domain: "ICLR.cc/2026/Conference"
+  invitation: "ICLR.cc/2026/Conference/-/Submission"
+  output_dir: "iclr_2026"
+
+venues:
+  - type: "poster"
+    venue: "ICLR 2026 Poster"
+  - type: "oral"
+    venue: "ICLR 2026 Oral"
+
+settings:
+  api_base_url: "https://api2.openreview.net/notes"
+  limit: 25
+  initial_delay: 0.8
+  max_delay: 2.0

@@ -1,0 +1,19 @@
+conference:
+  name: "NeurIPS 2025"
+  domain: "NeurIPS.cc/2025/Conference"
+  invitation: "NeurIPS.cc/2025/Conference/-/Submission"
+  output_dir: "neurips_2025"
+
+venues:
+  - type: "poster"
+    venue: "NeurIPS 2025 poster"
+  - type: "oral"
+    venue: "NeurIPS 2025 oral"
+  - type: "spotlight"
+    venue: "NeurIPS 2025 spotlight"
+
+settings:
+  api_base_url: "https://api2.openreview.net/notes"
+  limit: 25
+  initial_delay: 0.8
+  max_delay: 2.0
