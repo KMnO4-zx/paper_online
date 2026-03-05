@@ -76,7 +76,7 @@ def get_or_fetch_paper_info(paper_id: str) -> dict:
 async def get_paper_info(paper_id: str):
     """获取论文基本信息"""
     try:
-        paper_info = get_openreview_info(paper_id)
+        paper_info = get_or_fetch_paper_info(paper_id)
     except OpenReviewError as e:
         raise HTTPException(status_code=502, detail=str(e))
 

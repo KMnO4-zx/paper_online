@@ -128,6 +128,28 @@ body {
     margin-bottom: 16px;
     line-height: 1.4;
 }
+.paper-meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 12px;
+}
+.meta-tag {
+    padding: 6px 14px;
+    border-radius: 20px;
+    font-size: 0.85em;
+    font-weight: 500;
+}
+.meta-tag.venue {
+    background: linear-gradient(135deg, #667eea15, #764ba215);
+    color: #667eea;
+    border: 1px solid #667eea50;
+}
+.meta-tag.primary-area {
+    background: linear-gradient(135deg, #56ab2f15, #a8e06315);
+    color: #56ab2f;
+    border: 1px solid #56ab2f50;
+}
 .keywords {
     display: flex;
     flex-wrap: wrap;
