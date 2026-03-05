@@ -120,3 +120,28 @@ def delete_last_chat_message_pair(session_id: str):
     rows = supabase.table("chat_messages").select("id").eq("session_id", session_id).order("created_at", desc=True).limit(2).execute()
     for r in (rows.data or []):
         supabase.table("chat_messages").delete().eq("id", r["id"]).execute()
+
+
+def get_conference_papers(venue: str, offset: int, limit: int, search: str = None):
+    if not supabase:
+        return [], 0
+
+    query = supabase.table("papers").select("*", count="exact").ilike("venue", f"{venue}%")
+
+    if search:
+        # Search in keywords table first
+        keywords_result = supabase.table("keywords").select("paper_id").ilike("keyword", f"%{search}%").execute()
+        paper_ids = list(set([k["paper_id"] for k in keywords_result.data]))
+        if paper_ids:
+            query = query.in_("id", paper_ids)
+        else:
+            # No matching keywords, return empty
+            return [], 0
+
+    result = query.range(offset, offset + limit - 1).execute()
+
+    for paper in result.data:
+        keywords_result = supabase.table("keywords").select("keyword").eq("paper_id", paper["id"]).execute()
+        paper["keywords"] = [k["keyword"] for k in (keywords_result.data or [])]
+
+    return result.data, result.count

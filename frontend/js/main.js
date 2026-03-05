@@ -1,12 +1,16 @@
 // Main initialization
 function init() {
-    const urlPaperId = new URLSearchParams(window.location.search).get('id');
+    const params = new URLSearchParams(window.location.search);
+    const paperId = params.get('id');
+    const conference = params.get('conference');
 
-    if (!urlPaperId) {
-        initHomePage();
-    } else {
-        initPaperPage(urlPaperId);
+    if (conference) {
+        initConferencePage(conference);
+    } else if (paperId) {
+        initPaperPage(paperId);
         initChatListeners();
+    } else {
+        initHomePage();
     }
 
     initOnlineTracking();
