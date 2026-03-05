@@ -16,7 +16,20 @@ def get_paper(paper_id: str) -> dict | None:
     if not result.data:
         return None
 
-    return result.data[0]
+    paper = result.data[0]
+
+    # Fetch authors
+    authors_result = supabase.table("authors").select("author_name").eq("paper_id", paper_id).order("author_order").execute()
+    paper["authors"] = [a["author_name"] for a in (authors_result.data or [])]
+
+    # Fetch keywords
+    keywords_result = supabase.table("keywords").select("keyword").eq("paper_id", paper_id).execute()
+    paper["keywords"] = [k["keyword"] for k in (keywords_result.data or [])]
+
+    # Construct PDF URL
+    paper["pdf"] = f"https://openreview.net/pdf?id={paper_id}"
+
+    return paper
 
 
 def save_paper(paper_info: dict, llm_response: str = None):
@@ -27,12 +40,33 @@ def save_paper(paper_info: dict, llm_response: str = None):
         "id": paper_info["id"],
         "title": paper_info.get("title"),
         "abstract": paper_info.get("abstract"),
-        "keywords": paper_info.get("keywords", []),
-        "pdf": paper_info.get("pdf"),
+        "venue": paper_info.get("venue"),
+        "primary_area": paper_info.get("primary_area"),
         "llm_response": llm_response
     }
 
     supabase.table("papers").upsert(data).execute()
+
+    # Save authors
+    authors = paper_info.get("authors", [])
+    if authors:
+        supabase.table("authors").delete().eq("paper_id", paper_info["id"]).execute()
+        for i, author in enumerate(authors):
+            supabase.table("authors").insert({
+                "paper_id": paper_info["id"],
+                "author_name": author,
+                "author_order": i
+            }).execute()
+
+    # Save keywords
+    keywords = paper_info.get("keywords", [])
+    if keywords:
+        supabase.table("keywords").delete().eq("paper_id", paper_info["id"]).execute()
+        for keyword in keywords:
+            supabase.table("keywords").insert({
+                "paper_id": paper_info["id"],
+                "keyword": keyword
+            }).execute()
 
 
 def update_llm_response(paper_id: str, response: str):
@@ -77,13 +111,6 @@ def delete_chat_session(session_id: str):
         return
     supabase.table("chat_messages").delete().eq("session_id", session_id).execute()
     supabase.table("chat_sessions").delete().eq("id", session_id).execute()
-
-
-def get_recent_papers(limit: int = 3) -> list:
-    if not supabase:
-        return []
-    result = supabase.table("papers").select("id, title, abstract, keywords").order("created_at", desc=True).limit(limit).execute()
-    return result.data or []
 
 
 def delete_last_chat_message_pair(session_id: str):
