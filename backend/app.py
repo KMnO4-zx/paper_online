@@ -57,6 +57,21 @@ async def get_online_count():
     return {"count": len(online_users)}
 
 
+def get_or_fetch_paper_info(paper_id: str) -> dict:
+    """Get paper from database, or fetch from OpenReview if not exists."""
+    cached = get_paper(paper_id)
+    if cached:
+        return cached
+
+    # Fetch from OpenReview and save basic info
+    paper_info = get_openreview_info(paper_id)
+    if not paper_info:
+        raise OpenReviewError("Paper not found")
+
+    save_paper(paper_info, llm_response=None)
+    return paper_info
+
+
 @app.get("/papers/recent")
 async def recent_papers():
     return get_recent_papers(3)
@@ -78,32 +93,23 @@ async def get_paper_info(paper_id: str):
 
 @app.get("/paper/{paper_id}")
 async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
-    # Check cache first
-    cached = get_paper(paper_id)
-    if not reanalyze and cached and cached.get("llm_response"):
-        async def cached_stream():
-            yield {"data": cached["llm_response"]}
-            yield {"event": "done", "data": ""}
-        return EventSourceResponse(cached_stream())
-
     async def generate():
-        # 发送状态消息
+        # Ensure paper exists in database
         yield {"event": "status", "data": "正在获取论文信息..."}
-
-        # Fetch paper info from OpenReview (异步执行)
         try:
-            paper_info = await asyncio.to_thread(get_openreview_info, paper_id)
+            paper_info = await asyncio.to_thread(get_or_fetch_paper_info, paper_id)
         except OpenReviewError as e:
             yield {"event": "error", "data": str(e)}
             return
 
-        if not paper_info:
-            yield {"event": "error", "data": "论文未找到"}
+        # Check if we can return cached analysis
+        if not reanalyze and paper_info.get("llm_response"):
+            yield {"data": paper_info["llm_response"]}
+            yield {"event": "done", "data": ""}
             return
 
+        # Perform AI analysis
         yield {"event": "status", "data": "正在读取 PDF 内容..."}
-
-        # Get PDF content via Jina Reader (异步执行)
         try:
             paper_content = await asyncio.to_thread(reader, paper_info["pdf"])
         except ReaderError as e:
@@ -114,7 +120,6 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
 
         user_prompt = f"以下是论文内容：\n{paper_content}"
 
-        # Stream LLM response using thread-safe queue
         import queue as thread_queue
         import threading
         q = thread_queue.Queue()
@@ -143,13 +148,7 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
 
         thread.join()
 
-        # Save to database after streaming completes
-        response_text = "".join(full_response)
-        if cached:
-            update_llm_response(paper_id, response_text)
-        else:
-            save_paper(paper_info, response_text)
-
+        update_llm_response(paper_id, "".join(full_response))
         yield {"event": "done", "data": ""}
 
     return EventSourceResponse(generate())
@@ -161,18 +160,18 @@ async def chat_with_paper(paper_id: str, req: ChatRequest):
     is_new_session = False
 
     if not session:
-        cached = get_paper(paper_id)
-        if not cached:
-            raise HTTPException(status_code=404, detail="Paper not found")
+        try:
+            paper_info = await asyncio.to_thread(get_or_fetch_paper_info, paper_id)
+        except OpenReviewError as e:
+            raise HTTPException(status_code=502, detail=str(e))
 
         context_parts = []
-        if cached.get("pdf"):
-            paper_content = await asyncio.to_thread(reader, cached["pdf"])
+        if paper_info.get("pdf"):
+            paper_content = await asyncio.to_thread(reader, paper_info["pdf"])
             context_parts.append(f"论文全文：\n{paper_content}")
-        if cached.get("llm_response"):
-            context_parts.append(f"论文分析：\n{cached['llm_response']}")
+        if paper_info.get("llm_response"):
+            context_parts.append(f"论文分析：\n{paper_info['llm_response']}")
 
-        # Try loading history from DB
         history_rows = get_chat_messages(req.session_id)
         if history_rows:
             history = [{"role": r["role"], "content": r["content"]} for r in history_rows]
@@ -255,15 +254,17 @@ async def regenerate_chat(paper_id: str, req: ChatRequest):
     delete_last_chat_message_pair(req.session_id)
 
     if not session:
-        cached = get_paper(paper_id)
-        if not cached:
-            raise HTTPException(status_code=404, detail="Paper not found")
+        try:
+            paper_info = await asyncio.to_thread(get_or_fetch_paper_info, paper_id)
+        except OpenReviewError as e:
+            raise HTTPException(status_code=502, detail=str(e))
+
         context_parts = []
-        if cached.get("pdf"):
-            paper_content = await asyncio.to_thread(reader, cached["pdf"])
+        if paper_info.get("pdf"):
+            paper_content = await asyncio.to_thread(reader, paper_info["pdf"])
             context_parts.append(f"论文全文：\n{paper_content}")
-        if cached.get("llm_response"):
-            context_parts.append(f"论文分析：\n{cached['llm_response']}")
+        if paper_info.get("llm_response"):
+            context_parts.append(f"论文分析：\n{paper_info['llm_response']}")
         history_rows = get_chat_messages(req.session_id)
         history = [{"role": r["role"], "content": r["content"]} for r in history_rows] if history_rows else None
         session = ChatSession(llm, context="\n\n".join(context_parts), history=history)
