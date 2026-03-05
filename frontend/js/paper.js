@@ -14,12 +14,20 @@ async function loadPaperInfo() {
         const data = await fetchPaperInfo(paperId);
         document.getElementById('paper-title').textContent = data.title || '无标题';
 
+        const keywordsEl = document.getElementById('keywords');
+        let tagsHtml = '';
+        if (data.venue) {
+            tagsHtml += `<span class="meta-tag venue">${data.venue}</span>`;
+        }
+        if (data.primary_area) {
+            tagsHtml += `<span class="meta-tag primary-area">${data.primary_area}</span>`;
+        }
+        const keywords = data.keywords || [];
+        tagsHtml += keywords.map(k => `<span class="keyword">${k}</span>`).join('');
+        keywordsEl.innerHTML = tagsHtml;
+
         const abstractEl = document.getElementById('abstract');
         renderMarkdown(data.abstract || '无摘要', abstractEl);
-
-        const keywordsEl = document.getElementById('keywords');
-        const keywords = data.keywords || [];
-        keywordsEl.innerHTML = keywords.map(k => `<span class="keyword">${k}</span>`).join('');
 
         document.getElementById('openreview-link').href = `https://openreview.net/forum?id=${paperId}`;
         document.getElementById('pdf-link').href = data.pdf || '#';
