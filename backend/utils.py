@@ -63,8 +63,9 @@ def get_openreview_info(paper_id: str) -> dict | None:
                 "id": note.get("id"),
                 "title": content.get("title", {}).get("value"),
                 "abstract": content.get("abstract", {}).get("value"),
+                "authors": content.get("authors", {}).get("value", []),
                 "keywords": content.get("keywords", {}).get("value", []),
-                "tldr": content.get("TLDR", {}).get("value"),
+                "primary_area": content.get("primary_area", {}).get("value"),
                 "venue": content.get("venue", {}).get("value"),
                 "pdf": f"https://openreview.net/attachment?id={note['id']}&name=pdf",
             }

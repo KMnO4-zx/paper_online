@@ -5,11 +5,6 @@ async function fetchPaperInfo(paperId) {
     return res.json();
 }
 
-async function fetchRecentPapers() {
-    const res = await fetch('/papers/recent');
-    return res.json();
-}
-
 async function sendChatMessage(paperId, message, sessionId, userId) {
     return fetch(`/paper/${paperId}/chat`, {
         method: 'POST',
