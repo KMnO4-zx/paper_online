@@ -690,9 +690,11 @@ body {
 .search-bar {
     margin: 20px auto;
     max-width: 800px;
+    display: flex;
+    gap: 10px;
 }
 .search-bar input {
-    width: 100%;
+    flex: 1;
     padding: 12px 20px;
     border: 2px solid var(--card-border);
     border-radius: 12px;
@@ -703,6 +705,20 @@ body {
 .search-bar input:focus {
     outline: none;
     border-color: #f6d365;
+}
+.search-btn {
+    padding: 12px 30px;
+    border: none;
+    border-radius: 12px;
+    font-size: 1em;
+    font-weight: 600;
+    background: linear-gradient(135deg, #fda085 0%, #f6d365 100%);
+    color: white;
+    cursor: pointer;
+    transition: transform 0.2s;
+}
+.search-btn:hover {
+    transform: translateY(-2px);
 }
 #conference-papers {
     display: grid;

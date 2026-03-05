@@ -129,19 +129,32 @@ def get_conference_papers(venue: str, offset: int, limit: int, search: str = Non
     query = supabase.table("papers").select("*", count="exact").ilike("venue", f"{venue}%")
 
     if search:
-        # Search in keywords table first
+        # Search in keywords table
         keywords_result = supabase.table("keywords").select("paper_id").ilike("keyword", f"%{search}%").execute()
-        paper_ids = list(set([k["paper_id"] for k in keywords_result.data]))
-        if paper_ids:
-            query = query.in_("id", paper_ids)
+        paper_ids_from_keywords = list(set([k["paper_id"] for k in keywords_result.data]))
+
+        # Search in title and abstract using OR logic
+        if paper_ids_from_keywords:
+            query = query.or_(f"title.ilike.%{search}%,abstract.ilike.%{search}%,id.in.({','.join(paper_ids_from_keywords)})")
         else:
-            # No matching keywords, return empty
-            return [], 0
+            query = query.or_(f"title.ilike.%{search}%,abstract.ilike.%{search}%")
 
     result = query.range(offset, offset + limit - 1).execute()
 
-    for paper in result.data:
-        keywords_result = supabase.table("keywords").select("keyword").eq("paper_id", paper["id"]).execute()
-        paper["keywords"] = [k["keyword"] for k in (keywords_result.data or [])]
+    # Batch fetch all keywords in one query
+    if result.data:
+        paper_ids = [p["id"] for p in result.data]
+        keywords_result = supabase.table("keywords").select("paper_id, keyword").in_("paper_id", paper_ids).execute()
+
+        # Group keywords by paper_id
+        keywords_by_paper = {}
+        for k in keywords_result.data:
+            if k["paper_id"] not in keywords_by_paper:
+                keywords_by_paper[k["paper_id"]] = []
+            keywords_by_paper[k["paper_id"]].append(k["keyword"])
+
+        # Attach keywords to papers
+        for paper in result.data:
+            paper["keywords"] = keywords_by_paper.get(paper["id"], [])
 
     return result.data, result.count

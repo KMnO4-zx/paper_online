@@ -27,10 +27,19 @@ function initConferencePage(conference) {
     const newSearchInput = searchInput.cloneNode(true);
     searchInput.parentNode.replaceChild(newSearchInput, searchInput);
 
-    newSearchInput.addEventListener('input', debounce(() => {
+    // Add search button click event
+    document.getElementById('conference-search-btn').onclick = () => {
         currentPage = 1;
         loadConferencePapers();
-    }, 500));
+    };
+
+    // Add Shift+Enter key support
+    newSearchInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter' && e.shiftKey) {
+            currentPage = 1;
+            loadConferencePapers();
+        }
+    });
 
     loadConferencePapers();
 }
@@ -41,6 +50,9 @@ async function loadConferencePapers() {
     if (search) params.append('search', search);
 
     try {
+        // Show loading indicator
+        document.getElementById('conference-papers').innerHTML = '<p style="text-align: center; color: var(--text-secondary); padding: 40px;">加载中...</p>';
+
         const res = await fetch(`/conference/${currentConference}/papers?${params}`);
         const data = await res.json();
 
