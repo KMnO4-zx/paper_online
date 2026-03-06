@@ -126,7 +126,17 @@ function renderPagination(page, pages) {
     if (page > 1) html += `<button onclick="goToPage(${page-1})">上一页</button>`;
     html += `<span>第 ${page} / ${pages} 页</span>`;
     if (page < pages) html += `<button onclick="goToPage(${page+1})">下一页</button>`;
+    html += `<input type="number" id="jump-page-input" min="1" max="${pages}" placeholder="页码" style="width: 60px; margin-left: 10px; padding: 8px; border: 1px solid #ddd; border-radius: 4px;">`;
+    html += `<button onclick="jumpToPage(${pages})">跳转</button>`;
     document.getElementById('conference-pagination').innerHTML = html;
+}
+
+function jumpToPage(maxPages) {
+    const input = document.getElementById('jump-page-input');
+    const pageNum = parseInt(input.value);
+    if (pageNum >= 1 && pageNum <= maxPages) {
+        goToPage(pageNum);
+    }
 }
 
 function goToPage(page) {
