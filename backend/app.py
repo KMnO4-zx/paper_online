@@ -301,14 +301,26 @@ async def regenerate_chat(paper_id: str, req: ChatRequest):
 
 
 @app.get("/conference/{venue}/papers")
-async def get_conference_papers_endpoint(venue: str, page: int = 1, limit: int = 8, search: str = ""):
+async def get_conference_papers_endpoint(
+    venue: str,
+    page: int = 1,
+    limit: int = 8,
+    search: str = "",
+    search_title: bool = True,
+    search_abstract: bool = True,
+    search_keywords: bool = True
+):
     venue_map = {"neurips_2025": "NeurIPS 2025", "iclr_2026": "ICLR 2026"}
     venue_name = venue_map.get(venue)
     if not venue_name:
         raise HTTPException(status_code=404, detail="Conference not found")
 
     offset = (page - 1) * limit
-    papers, total = get_conference_papers(venue_name, offset, limit, search if search else None)
+    papers, total = get_conference_papers(
+        venue_name, offset, limit,
+        search if search else None,
+        search_title, search_abstract, search_keywords
+    )
 
     return {
         "papers": papers,

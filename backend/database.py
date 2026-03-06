@@ -127,15 +127,18 @@ def delete_last_chat_message_pair(session_id: str):
         supabase.table("chat_messages").delete().eq("id", r["id"]).execute()
 
 
-def get_conference_papers(venue: str, offset: int, limit: int, search: str = None):
+def get_conference_papers(
+    venue: str, offset: int, limit: int, search: str = None,
+    search_title: bool = True, search_abstract: bool = True, search_keywords: bool = True
+):
     if not supabase:
         return [], 0
 
-    cache_key = f"{venue}:{search or ''}"
+    cache_key = f"{venue}:{search or ''}:{search_title}:{search_abstract}:{search_keywords}"
     current_time = time.time()
 
-    # Use cache if available and fresh (5 minutes)
-    if cache_key in _conference_cache and (current_time - _cache_timestamp.get(cache_key, 0)) < 300:
+    # Use cache if available and fresh (24 hours)
+    if cache_key in _conference_cache and (current_time - _cache_timestamp.get(cache_key, 0)) < 86400:
         sorted_papers = _conference_cache[cache_key]
     else:
         # Fetch all papers in batches with retry
@@ -149,13 +152,27 @@ def get_conference_papers(venue: str, offset: int, limit: int, search: str = Non
                     query = supabase.table("papers").select("*").ilike("venue", f"{venue}%")
 
                     if search:
-                        keywords_result = supabase.table("keywords").select("paper_id").ilike("keyword", f"%{search}%").execute()
-                        paper_ids_from_keywords = list(set([k["paper_id"] for k in keywords_result.data]))
+                        # Return empty if all fields disabled
+                        if not (search_title or search_abstract or search_keywords):
+                            return [], 0
 
-                        if paper_ids_from_keywords:
-                            query = query.or_(f"title.ilike.%{search}%,abstract.ilike.%{search}%,id.in.({','.join(paper_ids_from_keywords)})")
-                        else:
-                            query = query.or_(f"title.ilike.%{search}%,abstract.ilike.%{search}%")
+                        # Build OR conditions based on selected fields
+                        conditions = []
+
+                        if search_keywords:
+                            keywords_result = supabase.table("keywords").select("paper_id").ilike("keyword", f"%{search}%").execute()
+                            paper_ids_from_keywords = list(set([k["paper_id"] for k in keywords_result.data]))
+                            if paper_ids_from_keywords:
+                                conditions.append(f"id.in.({','.join(paper_ids_from_keywords)})")
+
+                        if search_title:
+                            conditions.append(f"title.ilike.%{search}%")
+
+                        if search_abstract:
+                            conditions.append(f"abstract.ilike.%{search}%")
+
+                        if conditions:
+                            query = query.or_(','.join(conditions))
 
                     result = query.range(current_offset, current_offset + batch_size - 1).execute()
                     break
@@ -194,7 +211,19 @@ def get_conference_papers(venue: str, offset: int, limit: int, search: str = Non
     # Batch fetch keywords only for paginated papers
     if paginated_papers:
         paper_ids = [p["id"] for p in paginated_papers]
-        keywords_result = supabase.table("keywords").select("paper_id, keyword").in_("paper_id", paper_ids).execute()
+
+        # Retry logic for keywords fetch
+        for retry in range(3):
+            try:
+                keywords_result = supabase.table("keywords").select("paper_id, keyword").in_("paper_id", paper_ids).execute()
+                break
+            except Exception as e:
+                if retry == 2:
+                    # If all retries fail, return papers without keywords
+                    for paper in paginated_papers:
+                        paper["keywords"] = []
+                    return paginated_papers, len(sorted_papers)
+                time.sleep(1)
 
         # Group keywords by paper_id
         keywords_by_paper = {}

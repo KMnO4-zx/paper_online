@@ -751,3 +751,30 @@ body {
     transform: translateY(-2px);
 }
 
+.search-filters {
+    display: flex;
+    gap: 20px;
+    justify-content: center;
+    margin: 20px 0;
+}
+
+.search-filters label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    cursor: pointer;
+    font-size: 0.95em;
+    color: var(--text-secondary);
+    transition: color 0.2s;
+}
+
+.search-filters label:hover {
+    color: var(--text-primary);
+}
+
+.search-filters input[type="checkbox"] {
+    cursor: pointer;
+    width: 16px;
+    height: 16px;
+    accent-color: #667eea;
+}

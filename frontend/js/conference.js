@@ -41,13 +41,35 @@ function initConferencePage(conference) {
         }
     });
 
+    // Ensure at least one checkbox is always checked
+    const checkboxes = ['search-title', 'search-abstract', 'search-keywords'];
+    checkboxes.forEach(id => {
+        const checkbox = document.getElementById(id);
+        if (checkbox) {
+            checkbox.addEventListener('change', (e) => {
+                const checkedCount = checkboxes.filter(cbId => {
+                    const cb = document.getElementById(cbId);
+                    return cb && cb.checked;
+                }).length;
+                if (checkedCount === 0) {
+                    e.target.checked = true;
+                }
+            });
+        }
+    });
+
     loadConferencePapers();
 }
 
 async function loadConferencePapers() {
     const search = document.getElementById('conference-search').value;
     const params = new URLSearchParams({ page: currentPage, limit: 8 });
-    if (search) params.append('search', search);
+    if (search) {
+        params.append('search', search);
+        params.append('search_title', document.getElementById('search-title').checked);
+        params.append('search_abstract', document.getElementById('search-abstract').checked);
+        params.append('search_keywords', document.getElementById('search-keywords').checked);
+    }
 
     try {
         // Show loading indicator
