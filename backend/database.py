@@ -1,10 +1,15 @@
 import os
+import time
 from supabase import create_client
 
 SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
 SUPABASE_KEY = os.getenv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+
+# Cache for conference papers
+_conference_cache = {}
+_cache_timestamp = {}
 
 
 def get_paper(paper_id: str) -> dict | None:
@@ -126,24 +131,69 @@ def get_conference_papers(venue: str, offset: int, limit: int, search: str = Non
     if not supabase:
         return [], 0
 
-    query = supabase.table("papers").select("*", count="exact").ilike("venue", f"{venue}%")
+    cache_key = f"{venue}:{search or ''}"
+    current_time = time.time()
 
-    if search:
-        # Search in keywords table
-        keywords_result = supabase.table("keywords").select("paper_id").ilike("keyword", f"%{search}%").execute()
-        paper_ids_from_keywords = list(set([k["paper_id"] for k in keywords_result.data]))
+    # Use cache if available and fresh (5 minutes)
+    if cache_key in _conference_cache and (current_time - _cache_timestamp.get(cache_key, 0)) < 300:
+        sorted_papers = _conference_cache[cache_key]
+    else:
+        # Fetch all papers in batches with retry
+        all_papers = []
+        batch_size = 1000
+        current_offset = 0
 
-        # Search in title and abstract using OR logic
-        if paper_ids_from_keywords:
-            query = query.or_(f"title.ilike.%{search}%,abstract.ilike.%{search}%,id.in.({','.join(paper_ids_from_keywords)})")
-        else:
-            query = query.or_(f"title.ilike.%{search}%,abstract.ilike.%{search}%")
+        while True:
+            for retry in range(3):
+                try:
+                    query = supabase.table("papers").select("*").ilike("venue", f"{venue}%")
 
-    result = query.range(offset, offset + limit - 1).execute()
+                    if search:
+                        keywords_result = supabase.table("keywords").select("paper_id").ilike("keyword", f"%{search}%").execute()
+                        paper_ids_from_keywords = list(set([k["paper_id"] for k in keywords_result.data]))
 
-    # Batch fetch all keywords in one query
-    if result.data:
-        paper_ids = [p["id"] for p in result.data]
+                        if paper_ids_from_keywords:
+                            query = query.or_(f"title.ilike.%{search}%,abstract.ilike.%{search}%,id.in.({','.join(paper_ids_from_keywords)})")
+                        else:
+                            query = query.or_(f"title.ilike.%{search}%,abstract.ilike.%{search}%")
+
+                    result = query.range(current_offset, current_offset + batch_size - 1).execute()
+                    break
+                except Exception as e:
+                    if retry == 2:
+                        raise
+                    time.sleep(1)
+
+            if not result.data:
+                break
+
+            all_papers.extend(result.data)
+
+            if len(result.data) < batch_size:
+                break
+
+            current_offset += batch_size
+
+        # Sort by paper type priority
+        def get_paper_type_priority(paper):
+            venue_lower = paper['venue'].lower()
+            if 'oral' in venue_lower:
+                return 1
+            elif 'spotlight' in venue_lower:
+                return 2
+            elif 'poster' in venue_lower:
+                return 3
+            return 4
+
+        sorted_papers = sorted(all_papers, key=get_paper_type_priority)
+        _conference_cache[cache_key] = sorted_papers
+        _cache_timestamp[cache_key] = current_time
+
+    paginated_papers = sorted_papers[offset:offset + limit]
+
+    # Batch fetch keywords only for paginated papers
+    if paginated_papers:
+        paper_ids = [p["id"] for p in paginated_papers]
         keywords_result = supabase.table("keywords").select("paper_id, keyword").in_("paper_id", paper_ids).execute()
 
         # Group keywords by paper_id
@@ -154,7 +204,7 @@ def get_conference_papers(venue: str, offset: int, limit: int, search: str = Non
             keywords_by_paper[k["paper_id"]].append(k["keyword"])
 
         # Attach keywords to papers
-        for paper in result.data:
+        for paper in paginated_papers:
             paper["keywords"] = keywords_by_paper.get(paper["id"], [])
 
-    return result.data, result.count
+    return paginated_papers, len(sorted_papers)
