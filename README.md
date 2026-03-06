@@ -1,5 +1,5 @@
 <div align='center'>
-    <img src="./images/head.png" alt="alt text" width="100%">
+    <img src="./images/head.png" alt="alt text" width="90%">
     <h1><a href="https://paper-online.onrender.com">Paper Insight</a></h1>
 </div>
 
