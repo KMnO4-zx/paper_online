@@ -13,7 +13,7 @@
 
 ***&emsp;&emsp;可访问  https://paper-online.onrender.com 在线体验，或按照以下步骤在本地部署。***
 
-&emsp;&emsp;已支持：[ICLR 2026](https://github.com/KMnO4-zx/iclr26-all-papers), [NeurIPS 2025](https://kmno4-zx.github.io/nips25-all-papers/)。
+&emsp;&emsp;已支持：[ICLR 2026](https://paper-online.onrender.com/?conference=iclr_2026), [NeurIPS 2025](https://paper-online.onrender.com/?conference=neurips_2025), [ICML 2025](https://paper-online.onrender.com/?conference=icml_2025)
 
 > *注：LLM 使用 OpenRouter 接入 Step-3.5-Flash(Free) 模型，因为其免费且性能较好，适合当前的论文分析需求。后续将支持更多会议论文，并统一格式。*
 
