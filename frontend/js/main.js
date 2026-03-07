@@ -3,9 +3,12 @@ function init() {
     const params = new URLSearchParams(window.location.search);
     const paperId = params.get('id');
     const conference = params.get('conference');
+    const search = params.get('search');
 
     if (conference) {
         initConferencePage(conference);
+    } else if (search) {
+        initSearchPage(search);
     } else if (paperId) {
         initPaperPage(paperId);
         initChatListeners();

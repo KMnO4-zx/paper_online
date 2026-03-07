@@ -13,7 +13,7 @@ from pydantic import BaseModel
 
 from llm import SiliconflowLLM, OpenRouterLLM
 from utils import reader, get_openreview_info, ReaderError, OpenReviewError
-from database import get_paper, save_paper, update_llm_response, get_chat_sessions, create_chat_session, get_chat_messages, save_chat_message, delete_chat_session, delete_last_chat_message_pair, get_conference_papers
+from database import get_paper, save_paper, update_llm_response, get_chat_sessions, create_chat_session, get_chat_messages, save_chat_message, delete_chat_session, delete_last_chat_message_pair, get_conference_papers, search_all_papers
 from chat import ChatSession
 
 app = FastAPI()
@@ -318,6 +318,30 @@ async def get_conference_papers_endpoint(
     offset = (page - 1) * limit
     papers, total = get_conference_papers(
         venue_name, offset, limit,
+        search if search else None,
+        search_title, search_abstract, search_keywords
+    )
+
+    return {
+        "papers": papers,
+        "total": total,
+        "page": page,
+        "pages": math.ceil(total / limit) if total > 0 else 1
+    }
+
+
+@app.get("/search/papers")
+async def search_all_papers_endpoint(
+    page: int = 1,
+    limit: int = 8,
+    search: str = "",
+    search_title: bool = True,
+    search_abstract: bool = True,
+    search_keywords: bool = True
+):
+    offset = (page - 1) * limit
+    papers, total = search_all_papers(
+        offset, limit,
         search if search else None,
         search_title, search_abstract, search_keywords
     )

@@ -237,3 +237,105 @@ def get_conference_papers(
             paper["keywords"] = keywords_by_paper.get(paper["id"], [])
 
     return paginated_papers, len(sorted_papers)
+
+
+def search_all_papers(
+    offset: int, limit: int, search: str = None,
+    search_title: bool = True, search_abstract: bool = True, search_keywords: bool = True
+):
+    if not supabase:
+        return [], 0
+
+    cache_key = f"all:{search or ''}:{search_title}:{search_abstract}:{search_keywords}"
+    current_time = time.time()
+
+    if cache_key in _conference_cache and (current_time - _cache_timestamp.get(cache_key, 0)) < 86400:
+        sorted_papers = _conference_cache[cache_key]
+    else:
+        all_papers = []
+        batch_size = 1000
+        current_offset = 0
+
+        while True:
+            for retry in range(3):
+                try:
+                    query = supabase.table("papers").select("*")
+
+                    if search:
+                        if not (search_title or search_abstract or search_keywords):
+                            return [], 0
+
+                        conditions = []
+
+                        if search_keywords:
+                            keywords_result = supabase.table("keywords").select("paper_id").ilike("keyword", f"%{search}%").execute()
+                            paper_ids_from_keywords = list(set([k["paper_id"] for k in keywords_result.data]))
+                            if paper_ids_from_keywords:
+                                conditions.append(f"id.in.({','.join(paper_ids_from_keywords)})")
+
+                        if search_title:
+                            conditions.append(f"title.ilike.%{search}%")
+
+                        if search_abstract:
+                            conditions.append(f"abstract.ilike.%{search}%")
+
+                        if conditions:
+                            query = query.or_(','.join(conditions))
+
+                    result = query.range(current_offset, current_offset + batch_size - 1).execute()
+                    break
+                except Exception as e:
+                    if retry == 2:
+                        raise
+                    time.sleep(1)
+
+            if not result.data:
+                break
+
+            all_papers.extend(result.data)
+
+            if len(result.data) < batch_size:
+                break
+
+            current_offset += batch_size
+
+        def get_paper_type_priority(paper):
+            venue_lower = paper['venue'].lower()
+            if 'oral' in venue_lower:
+                return 1
+            elif 'spotlight' in venue_lower:
+                return 2
+            elif 'poster' in venue_lower:
+                return 3
+            return 4
+
+        sorted_papers = sorted(all_papers, key=get_paper_type_priority)
+        _conference_cache[cache_key] = sorted_papers
+        _cache_timestamp[cache_key] = current_time
+
+    paginated_papers = sorted_papers[offset:offset + limit]
+
+    if paginated_papers:
+        paper_ids = [p["id"] for p in paginated_papers]
+
+        for retry in range(3):
+            try:
+                keywords_result = supabase.table("keywords").select("paper_id, keyword").in_("paper_id", paper_ids).execute()
+                break
+            except Exception as e:
+                if retry == 2:
+                    for paper in paginated_papers:
+                        paper["keywords"] = []
+                    return paginated_papers, len(sorted_papers)
+                time.sleep(1)
+
+        keywords_by_paper = {}
+        for k in keywords_result.data:
+            if k["paper_id"] not in keywords_by_paper:
+                keywords_by_paper[k["paper_id"]] = []
+            keywords_by_paper[k["paper_id"]].append(k["keyword"])
+
+        for paper in paginated_papers:
+            paper["keywords"] = keywords_by_paper.get(paper["id"], [])
+
+    return paginated_papers, len(sorted_papers)

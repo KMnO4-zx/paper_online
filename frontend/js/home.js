@@ -1,36 +1,35 @@
-// Home page logic
 function initHomePage() {
-    document.getElementById('home-section').style.display = 'flex';
+    document.getElementById('home-section').style.display = 'block';
     document.getElementById('analysis-section').style.display = 'none';
     document.getElementById('conference-section').style.display = 'none';
+    document.getElementById('search-section').style.display = 'none';
 
-    document.getElementById('search-form').addEventListener('submit', function(e) {
-        e.preventDefault();
-        const inputId = document.getElementById('paper-id-input').value.trim();
-        if (inputId) {
-            window.location.href = '?id=' + encodeURIComponent(inputId);
+    const checkboxes = ['home-search-title', 'home-search-abstract', 'home-search-keywords'];
+    checkboxes.forEach(id => {
+        const checkbox = document.getElementById(id);
+        if (checkbox) {
+            checkbox.addEventListener('change', (e) => {
+                const checkedCount = checkboxes.filter(cbId => {
+                    const cb = document.getElementById(cbId);
+                    return cb && cb.checked;
+                }).length;
+                if (checkedCount === 0) {
+                    e.target.checked = true;
+                }
+            });
         }
     });
 
-    // Add conference cards after search card
-    const homeSection = document.getElementById('home-section');
-    if (!document.getElementById('conference-cards-section')) {
-        const conferenceSection = document.createElement('div');
-        conferenceSection.id = 'conference-cards-section';
-        conferenceSection.className = 'recent-section';
-        conferenceSection.innerHTML = `
-            <h3 class="recent-title">浏览会议论文</h3>
-            <div class="conference-cards">
-                <a href="?conference=neurips_2025" class="conference-entry-card">
-                    <h2>NeurIPS 2025</h2>
-                    <p>Neural Information Processing Systems</p>
-                </a>
-                <a href="?conference=iclr_2026" class="conference-entry-card">
-                    <h2>ICLR 2026</h2>
-                    <p>International Conference on Learning Representations</p>
-                </a>
-            </div>
-        `;
-        homeSection.appendChild(conferenceSection);
-    }
+    document.getElementById('search-form').addEventListener('submit', function(e) {
+        e.preventDefault();
+        const keyword = document.getElementById('search-input').value.trim();
+        if (keyword) {
+            const params = new URLSearchParams();
+            params.append('search', keyword);
+            params.append('title', document.getElementById('home-search-title').checked);
+            params.append('abstract', document.getElementById('home-search-abstract').checked);
+            params.append('keywords', document.getElementById('home-search-keywords').checked);
+            window.location.href = '?' + params.toString();
+        }
+    });
 }

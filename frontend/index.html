@@ -42,16 +42,31 @@
     <!-- 主页输入表单 -->
     <div class="home-container" id="home-section" style="display: none;">
         <div class="search-card">
-            <h2>输入论文 ID</h2>
-            <p>请输入 OpenReview 论文 ID 开始分析</p>
+            <h2>搜索论文</h2>
+            <p>搜索所有会议的论文</p>
+            <div class="search-filters">
+                <label><input type="checkbox" id="home-search-title" checked> Title</label>
+                <label><input type="checkbox" id="home-search-abstract" checked> Abstract</label>
+                <label><input type="checkbox" id="home-search-keywords" checked> Keywords</label>
+            </div>
             <form class="search-form" id="search-form">
-                <input type="text" class="search-input" id="paper-id-input"
-                       placeholder="例如: uq6UWRgzMr" required>
-                <button type="submit" class="search-btn">分析</button>
+                <input type="text" class="search-input" id="search-input"
+                       placeholder="输入关键词搜索..." required>
+                <button type="submit" class="search-btn">搜索</button>
             </form>
-            <p class="example-text">
-                示例: <a href="?id=uq6UWRgzMr">uq6UWRgzMr</a>
-            </p>
+        </div>
+        <div class="recent-section">
+            <h3 class="recent-title">浏览会议论文</h3>
+            <div class="conference-cards">
+                <a href="?conference=neurips_2025" class="conference-entry-card">
+                    <h2>NeurIPS 2025</h2>
+                    <p>Neural Information Processing Systems</p>
+                </a>
+                <a href="?conference=iclr_2026" class="conference-entry-card">
+                    <h2>ICLR 2026</h2>
+                    <p>International Conference on Learning Representations</p>
+                </a>
+            </div>
         </div>
     </div>
 
@@ -131,12 +146,28 @@
         <div id="conference-pagination"></div>
     </div>
 
+    <div class="conference-container" id="search-section" style="display: none;">
+        <h1>搜索结果</h1>
+        <div class="search-filters">
+            <label><input type="checkbox" id="global-search-title" checked> Title</label>
+            <label><input type="checkbox" id="global-search-abstract" checked> Abstract</label>
+            <label><input type="checkbox" id="global-search-keywords" checked> Keywords</label>
+        </div>
+        <div class="search-bar">
+            <input id="global-search-input" type="text" placeholder="搜索关键词... (Shift+Enter 搜索)">
+            <button id="global-search-btn" class="search-btn">Search</button>
+        </div>
+        <div id="search-papers"></div>
+        <div id="search-pagination"></div>
+    </div>
+
     <script src="/js/utils.js"></script>
     <script src="/js/api.js"></script>
     <script src="/js/home.js"></script>
     <script src="/js/paper.js"></script>
     <script src="/js/chat.js"></script>
     <script src="/js/conference.js"></script>
+    <script src="/js/search.js"></script>
     <script src="/js/online.js"></script>
     <script src="/js/main.js"></script>
 </body>

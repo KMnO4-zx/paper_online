@@ -277,7 +277,7 @@ body {
     flex-direction: column;
     align-items: center;
     padding: 20px 20px 0;
-    max-width: 900px;
+    max-width: 800px;
     margin: 0 auto;
 }
 .home-container#home-section {
@@ -365,9 +365,9 @@ body {
     padding: 40px;
     box-shadow: 0 4px 20px var(--card-shadow);
     border: 1px solid var(--card-border);
-    max-width: 800px;
     width: 100%;
     text-align: center;
+    margin-bottom: 40px;
 }
 .search-card h2 {
     color: var(--title-color);
@@ -382,6 +382,8 @@ body {
 .search-form {
     display: flex;
     gap: 12px;
+    max-width: 800px;
+    margin: 0 auto;
 }
 .search-input {
     flex: 1;
@@ -691,6 +693,32 @@ body {
 }
 .conference-entry-card p {
     color: var(--text-secondary);
+}
+#search-papers {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 20px;
+    margin: 20px auto;
+    max-width: 900px;
+}
+#search-pagination {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    margin-top: 20px;
+}
+#search-pagination button {
+    padding: 8px 16px;
+    border: none;
+    border-radius: 8px;
+    background: linear-gradient(135deg, #fda085 0%, #f6d365 100%);
+    color: white;
+    cursor: pointer;
+    font-weight: 600;
+}
+#search-pagination button:hover {
+    transform: translateY(-2px);
 }
 .conference-container {
     max-width: 1200px;
