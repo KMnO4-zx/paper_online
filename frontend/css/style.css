@@ -199,6 +199,28 @@ body {
     background: var(--gradient-success);
     color: white;
 }
+.link-btn.viewed {
+    background: #e8f4f8;
+    color: #1890ff;
+    border: 1px solid #91d5ff;
+}
+.link-btn.viewed.active {
+    background: #1890ff;
+    color: white;
+}
+.link-btn.liked {
+    background: #fff1f0;
+    color: #ff4d4f;
+    border: 1px solid #ffccc7;
+}
+.link-btn.liked.active {
+    background: #ff4d4f;
+    color: white;
+}
+.status-icon {
+    font-size: 0.9em;
+    margin-right: 6px;
+}
 .section-title {
     font-size: 1.15em;
     font-weight: 600;

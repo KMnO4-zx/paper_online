@@ -112,6 +112,7 @@ function renderSearchPapers(papers) {
         <a href="?id=${p.id}" class="recent-card">
             <div class="recent-card-title">
                 <span class="paper-number">${paperNumber}</span>
+                ${getStatusIcons(p.id)}
                 ${p.title}
             </div>
             <div class="paper-meta">

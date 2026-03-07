@@ -49,3 +49,24 @@ async function handleSSEStream(url, onData, onError) {
     }
     return fullText;
 }
+
+// Paper marking functions
+function getPaperMarks(paperId) {
+    const marks = JSON.parse(localStorage.getItem('paperMarks') || '{}');
+    return marks[paperId] || { viewed: false, liked: false };
+}
+
+function setPaperMark(paperId, markType, value) {
+    const marks = JSON.parse(localStorage.getItem('paperMarks') || '{}');
+    if (!marks[paperId]) marks[paperId] = { viewed: false, liked: false };
+    marks[paperId][markType] = value;
+    localStorage.setItem('paperMarks', JSON.stringify(marks));
+}
+
+function getStatusIcons(paperId) {
+    const marks = getPaperMarks(paperId);
+    let icons = '';
+    if (marks.viewed) icons += '<span class="status-icon">👁️</span>';
+    if (marks.liked) icons += '<span class="status-icon">❤️</span>';
+    return icons;
+}

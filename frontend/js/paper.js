@@ -32,6 +32,8 @@ async function loadPaperInfo() {
         document.getElementById('openreview-link').href = `https://openreview.net/forum?id=${paperId}`;
         document.getElementById('pdf-link').href = data.pdf || '#';
 
+        updateMarkButtons();
+
         document.getElementById('paper-loading').style.display = 'none';
         document.getElementById('paper-content').style.display = 'block';
     } catch (e) {
@@ -89,4 +91,32 @@ function loadAnalysis(reanalyze = false) {
             loadingEl.innerHTML = '<div class="error">连接失败，请稍后重试</div>';
         }
     };
+}
+
+function updateMarkButtons() {
+    const marks = getPaperMarks(paperId);
+    const viewedBtn = document.getElementById('mark-viewed-btn');
+    const likedBtn = document.getElementById('mark-liked-btn');
+
+    viewedBtn.textContent = marks.viewed ? '✓ 已看过' : '👁️ 标记看过';
+    viewedBtn.className = marks.viewed ? 'link-btn viewed active' : 'link-btn viewed';
+
+    likedBtn.textContent = marks.liked ? '❤️ 已点赞' : '❤️ 点赞';
+    likedBtn.className = marks.liked ? 'link-btn liked active' : 'link-btn liked';
+}
+
+function toggleViewed() {
+    const marks = getPaperMarks(paperId);
+    setPaperMark(paperId, 'viewed', !marks.viewed);
+    updateMarkButtons();
+}
+
+function toggleLiked() {
+    const marks = getPaperMarks(paperId);
+    const newLikedState = !marks.liked;
+    setPaperMark(paperId, 'liked', newLikedState);
+    if (newLikedState) {
+        setPaperMark(paperId, 'viewed', true);
+    }
+    updateMarkButtons();
 }
