@@ -92,7 +92,9 @@ function renderPapers(papers) {
         container.innerHTML = '<p style="color: var(--text-secondary); text-align: center; grid-column: 1/-1;">暂无论文数据</p>';
         return;
     }
-    container.innerHTML = papers.map(p => {
+    container.innerHTML = papers.map((p, index) => {
+        const paperNumber = (currentPage - 1) * 8 + index + 1;
+
         // Process keywords - split by semicolon if needed
         let keywords = [];
         if (p.keywords && Array.isArray(p.keywords)) {
@@ -107,7 +109,10 @@ function renderPapers(papers) {
 
         return `
         <a href="?id=${p.id}" class="recent-card">
-            <div class="recent-card-title">${p.title}</div>
+            <div class="recent-card-title">
+                <span class="paper-number">${paperNumber}</span>
+                ${p.title}
+            </div>
             <div class="paper-meta">
                 ${p.venue ? `<span class="meta-tag venue">${p.venue}</span>` : ''}
                 ${p.primary_area ? `<span class="meta-tag primary-area">${p.primary_area}</span>` : ''}
