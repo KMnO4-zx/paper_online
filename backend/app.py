@@ -1,7 +1,9 @@
 import asyncio
 import math
+import logging
 from pathlib import Path
 from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,8 +17,33 @@ from llm import SiliconflowLLM, OpenRouterLLM
 from utils import reader, get_openreview_info, ReaderError, OpenReviewError
 from database import get_paper, save_paper, update_llm_response, get_chat_sessions, create_chat_session, get_chat_messages, save_chat_message, delete_chat_session, delete_last_chat_message_pair, get_conference_papers, search_all_papers
 from chat import ChatSession
+from background_tasks import BackgroundAnalyzer
 
-app = FastAPI()
+logger = logging.getLogger(__name__)
+
+llm = OpenRouterLLM()
+chat_sessions: dict[str, ChatSession] = {}
+background_analyzer = BackgroundAnalyzer(llm, check_interval=600)
+background_task = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global background_task
+    background_task = asyncio.create_task(background_analyzer.run())
+    logger.info("后台分析任务已启动")
+
+    yield
+
+    background_analyzer.stop()
+    if background_task:
+        background_task.cancel()
+        try:
+            await background_task
+        except asyncio.CancelledError:
+            pass
+    logger.info("后台分析任务已停止")
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,9 +52,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-llm = OpenRouterLLM()
-chat_sessions: dict[str, ChatSession] = {}
 
 # 在线用户追踪
 online_users: dict[str, datetime] = {}
