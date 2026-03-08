@@ -14,16 +14,16 @@ class ChatSession:
         messages.extend(self.history)
         return messages
 
-    def send(self, user_message: str, **kwargs) -> str:
+    async def send(self, user_message: str, **kwargs) -> str:
         self.history.append({"role": "user", "content": user_message})
-        reply = self.llm.chat(self._build_messages(), **kwargs)
+        reply = await self.llm.chat(self._build_messages(), **kwargs)
         self.history.append({"role": "assistant", "content": reply})
         return reply
 
-    def send_stream(self, user_message: str, **kwargs):
+    async def send_stream(self, user_message: str, **kwargs):
         self.history.append({"role": "user", "content": user_message})
         chunks = []
-        for chunk in self.llm.chat_stream(self._build_messages(), **kwargs):
+        async for chunk in self.llm.chat_stream(self._build_messages(), **kwargs):
             chunks.append(chunk)
             yield chunk
         self.history.append({"role": "assistant", "content": "".join(chunks)})

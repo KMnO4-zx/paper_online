@@ -176,7 +176,7 @@ def get_conference_papers(
 
                     result = query.range(current_offset, current_offset + batch_size - 1).execute()
                     break
-                except Exception as e:
+                except Exception:
                     if retry == 2:
                         raise
                     time.sleep(1)
@@ -217,7 +217,7 @@ def get_conference_papers(
             try:
                 keywords_result = supabase.table("keywords").select("paper_id, keyword").in_("paper_id", paper_ids).execute()
                 break
-            except Exception as e:
+            except Exception:
                 if retry == 2:
                     # If all retries fail, return papers without keywords
                     for paper in paginated_papers:
@@ -284,7 +284,7 @@ def search_all_papers(
 
                     result = query.range(current_offset, current_offset + batch_size - 1).execute()
                     break
-                except Exception as e:
+                except Exception:
                     if retry == 2:
                         raise
                     time.sleep(1)
@@ -322,7 +322,7 @@ def search_all_papers(
             try:
                 keywords_result = supabase.table("keywords").select("paper_id, keyword").in_("paper_id", paper_ids).execute()
                 break
-            except Exception as e:
+            except Exception:
                 if retry == 2:
                     for paper in paginated_papers:
                         paper["keywords"] = []
@@ -339,3 +339,12 @@ def search_all_papers(
             paper["keywords"] = keywords_by_paper.get(paper["id"], [])
 
     return paginated_papers, len(sorted_papers)
+
+
+def get_unanalyzed_papers(limit: int = 10) -> list:
+    """获取未分析的论文（llm_response IS NULL）"""
+    if not supabase:
+        return []
+
+    result = supabase.table("papers").select("id, title, venue").is_("llm_response", "null").limit(limit).execute()
+    return result.data or []

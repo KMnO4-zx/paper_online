@@ -1,7 +1,9 @@
 import asyncio
 import math
+import logging
 from pathlib import Path
 from datetime import datetime, timedelta
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,8 +17,33 @@ from llm import SiliconflowLLM, OpenRouterLLM
 from utils import reader, get_openreview_info, ReaderError, OpenReviewError
 from database import get_paper, save_paper, update_llm_response, get_chat_sessions, create_chat_session, get_chat_messages, save_chat_message, delete_chat_session, delete_last_chat_message_pair, get_conference_papers, search_all_papers
 from chat import ChatSession
+from background_tasks import BackgroundAnalyzer
 
-app = FastAPI()
+logger = logging.getLogger(__name__)
+
+llm = OpenRouterLLM()
+chat_sessions: dict[str, ChatSession] = {}
+background_analyzer = BackgroundAnalyzer(llm, check_interval=600)
+background_task = None
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    global background_task
+    background_task = asyncio.create_task(background_analyzer.run())
+    logger.info("后台分析任务已启动")
+
+    yield
+
+    background_analyzer.stop()
+    if background_task:
+        background_task.cancel()
+        try:
+            await background_task
+        except asyncio.CancelledError:
+            pass
+    logger.info("后台分析任务已停止")
+
+app = FastAPI(lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
@@ -25,9 +52,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-llm = OpenRouterLLM()
-chat_sessions: dict[str, ChatSession] = {}
 
 # 在线用户追踪
 online_users: dict[str, datetime] = {}
@@ -116,33 +140,10 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
 
         user_prompt = f"以下是论文内容：\n{paper_content}"
 
-        import queue as thread_queue
-        import threading
-        q = thread_queue.Queue()
-
-        def run_llm():
-            try:
-                for chunk in llm.get_response_stream(user_prompt):
-                    q.put(chunk)
-            finally:
-                q.put(None)
-
-        thread = threading.Thread(target=run_llm)
-        thread.start()
-
         full_response = []
-        while True:
-            try:
-                chunk = q.get(timeout=0.05)
-            except thread_queue.Empty:
-                await asyncio.sleep(0.01)
-                continue
-            if chunk is None:
-                break
+        async for chunk in llm.get_response_stream(user_prompt):
             full_response.append(chunk)
             yield {"data": chunk}
-
-        thread.join()
 
         update_llm_response(paper_id, "".join(full_response))
         yield {"event": "done", "data": ""}
@@ -178,38 +179,14 @@ async def chat_with_paper(paper_id: str, req: ChatRequest):
         session = ChatSession(llm, context="\n\n".join(context_parts), history=history)
         chat_sessions[req.session_id] = session
 
-    import queue as thread_queue
-    import threading
-
-    q = thread_queue.Queue()
-
-    def run_chat():
-        try:
-            for chunk in session.send_stream(req.message):
-                q.put(chunk)
-        finally:
-            q.put(None)
-
     async def generate():
         if is_new_session:
             create_chat_session(req.session_id, req.user_id, paper_id, req.message[:50])
 
-        thread = threading.Thread(target=run_chat)
-        thread.start()
-
         chunks = []
-        while True:
-            try:
-                chunk = q.get(timeout=0.05)
-            except thread_queue.Empty:
-                await asyncio.sleep(0.01)
-                continue
-            if chunk is None:
-                break
+        async for chunk in session.send_stream(req.message):
             chunks.append(chunk)
             yield {"data": chunk}
-
-        thread.join()
 
         # Persist messages
         save_chat_message(req.session_id, "user", req.message)
@@ -266,32 +243,12 @@ async def regenerate_chat(paper_id: str, req: ChatRequest):
         session = ChatSession(llm, context="\n\n".join(context_parts), history=history)
         chat_sessions[req.session_id] = session
 
-    import queue as thread_queue
-    import threading
-    q = thread_queue.Queue()
-
-    def run_chat():
-        try:
-            for chunk in session.send_stream(req.message):
-                q.put(chunk)
-        finally:
-            q.put(None)
-
     async def generate():
-        thread = threading.Thread(target=run_chat)
-        thread.start()
         chunks = []
-        while True:
-            try:
-                chunk = q.get(timeout=0.05)
-            except thread_queue.Empty:
-                await asyncio.sleep(0.01)
-                continue
-            if chunk is None:
-                break
+        async for chunk in session.send_stream(req.message):
             chunks.append(chunk)
             yield {"data": chunk}
-        thread.join()
+
         save_chat_message(req.session_id, "user", req.message)
         save_chat_message(req.session_id, "assistant", "".join(chunks))
 
