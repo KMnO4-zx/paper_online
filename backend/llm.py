@@ -81,12 +81,37 @@ class SiliconflowLLM(BaseLLM):
         self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
 
 class OpenRouterLLM(BaseLLM):
-    def __init__(self, api_key: str = None, base_url: str = None, model: str = "stepfun/step-3.5-flash:free"):
+    def __init__(self, api_key: str = None, base_url: str = None, model: str = "stepfun/step-3.5-flash:free", max_completion_tokens: int = 12000):
         self.api_key = api_key if api_key else os.getenv("OPEN_ROUTER_API_KEY")
         self.base_url = base_url if base_url else "https://openrouter.ai/api/v1"
         self.model = model
+        self.max_completion_tokens = max_completion_tokens
         self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
-        
+
+    async def get_response(self, prompt: str, **kwargs) -> str:
+        kwargs.setdefault('max_completion_tokens', self.max_completion_tokens)
+        return await super().get_response(prompt, **kwargs)
+
+    async def get_response_stream(self, prompt: str, **kwargs):
+        kwargs.setdefault('max_completion_tokens', self.max_completion_tokens)
+        async for chunk in super().get_response_stream(prompt, **kwargs):
+            yield chunk
+
+    async def chat(self, messages: list, **kwargs) -> str:
+        kwargs.setdefault('max_completion_tokens', self.max_completion_tokens)
+        return await super().chat(messages, **kwargs)
+
+    async def chat_stream(self, messages: list, **kwargs):
+        kwargs.setdefault('max_completion_tokens', self.max_completion_tokens)
+        async for chunk in super().chat_stream(messages, **kwargs):
+            yield chunk
+
+class StepLLM(BaseLLM):
+    def __init__(self, api_key: str = None, base_url: str = None, model: str = "step-3.5-flash"):
+        self.api_key = api_key if api_key else os.getenv("STEP_API_KEY")
+        self.base_url = base_url if base_url else os.getenv("STEP_BASE_URL")
+        self.model = model
+        self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
 
 if __name__ == "__main__":
     import asyncio
