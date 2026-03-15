@@ -97,13 +97,11 @@ def _insert_batch(papers, authors, keywords):
         supabase.table("papers").upsert(papers).execute()
     if authors:
         paper_ids = list(set(a["paper_id"] for a in authors))
-        for pid in paper_ids:
-            supabase.table("authors").delete().eq("paper_id", pid).execute()
+        supabase.table("authors").delete().in_("paper_id", paper_ids).execute()
         supabase.table("authors").insert(authors).execute()
     if keywords:
         paper_ids = list(set(k["paper_id"] for k in keywords))
-        for pid in paper_ids:
-            supabase.table("keywords").delete().eq("paper_id", pid).execute()
+        supabase.table("keywords").delete().in_("paper_id", paper_ids).execute()
         supabase.table("keywords").insert(keywords).execute()
 
 

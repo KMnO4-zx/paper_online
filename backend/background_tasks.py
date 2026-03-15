@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from database import get_unanalyzed_papers, get_paper, update_llm_response
-from utils import reader, ReaderError
+from utils import reader, ReaderError, truncate_content_for_llm
 
 logger = logging.getLogger(__name__)
 
@@ -24,6 +24,7 @@ class BackgroundAnalyzer:
 
                 logger.info(f"[{paper_id}] 读取 PDF...")
                 paper_content = await asyncio.to_thread(reader, paper_info["pdf"])
+                paper_content = truncate_content_for_llm(paper_content)
 
                 logger.info(f"[{paper_id}] 生成分析...")
                 user_prompt = f"以下是论文内容：\n{paper_content}"

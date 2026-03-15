@@ -1,12 +1,15 @@
 import requests
 import time
 import logging
+import tiktoken
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TIMEOUT = 30
 MAX_RETRIES = 3
+LLM_CONTENT_TOKEN_LIMIT = 180000
+_TOKEN_ENCODING = tiktoken.get_encoding("cl100k_base")
 
 HEADERS = {
     "Accept": "application/json,text/*;q=0.99",
@@ -24,6 +27,23 @@ class ReaderError(Exception):
 class OpenReviewError(Exception):
     """OpenReview API 请求失败"""
     pass
+
+
+def truncate_content_for_llm(text: str, max_tokens: int = LLM_CONTENT_TOKEN_LIMIT) -> str:
+    token_ids = _TOKEN_ENCODING.encode(text)
+    token_count = len(token_ids)
+
+    if token_count <= max_tokens:
+        logger.info(f"LLM content within token limit: {token_count} <= {max_tokens}")
+        return text
+
+    truncated_text = _TOKEN_ENCODING.decode(token_ids[:max_tokens])
+    logger.warning(
+        "LLM content truncated by tokens: original=%s, kept=%s",
+        token_count,
+        max_tokens,
+    )
+    return truncated_text
 
 
 def reader(url: str) -> str:
