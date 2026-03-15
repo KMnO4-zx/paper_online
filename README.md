@@ -9,7 +9,7 @@ English | [简体中文](./README_zh.md)
 
 ## 🎯 Project Introduction
 
-&emsp;&emsp;Paper Insight is an online paper analysis tool built with FastAPI and Supabase, leveraging LLM technology to provide paper summaries, keyword extraction, and related work recommendations, helping researchers quickly understand and analyze academic papers.
+&emsp;&emsp;Paper Insight is an online paper analysis tool built with FastAPI and Supabase, leveraging LLM technology to provide fast paper analysis and interactive chat, helping researchers quickly understand and screen academic papers.
 
 &emsp;&emsp;This project aims to assist in quickly browsing AI conference papers. Through AI-generated summaries, users can decide whether to save papers to Zotero for in-depth reading. Currently supports papers from the OpenReview platform only, as part of the author's personal paper reading workflow, with no plans to support other platforms.
 
@@ -17,7 +17,7 @@ English | [简体中文](./README_zh.md)
 
 &emsp;&emsp;Supported conferences: [ICLR 2026](https://paper-online.onrender.com/?conference=iclr_2026), [NeurIPS 2025](https://paper-online.onrender.com/?conference=neurips_2025), [ICML 2025](https://paper-online.onrender.com/?conference=icml_2025)
 
-> *Note: Uses OpenRouter to access Step-3.5-Flash (Free) model for its free tier and good performance, suitable for current paper analysis needs. More conferences will be supported with unified format.*
+> *Note: The default LLM provider is OpenRouter, currently using `stepfun/step-3.5-flash:free`. More conferences will be supported with unified format.*
 
 ### 🤔 Why not [cool papers](https://papers.cool/)?
 
@@ -36,7 +36,7 @@ English | [简体中文](./README_zh.md)
 ## ✨ Features
 
 ### 📄 Paper Analysis
-- **Quick Analysis**: Input OpenReview paper ID, AI automatically generates paper summary, keywords, and related work recommendations
+- **Quick Analysis**: Input an OpenReview paper ID, and AI answers four core questions: whether code is available, what task the paper solves, what metrics it uses, and why the method improves over baseline
 - **Smart Caching**: Analysis results automatically saved to database, instant access on revisit
 - **Re-analysis**: Support regenerating analysis results
 - **Streaming Output**: Real-time display of AI analysis process, no waiting
@@ -69,13 +69,15 @@ uv sync
 
 ### 2. Configure Environment Variables
 
-Create a `.env` file in the project root directory with the following content:
+Create a `.env` file in the `backend/` directory with the following content:
 
 ```bash
-SILICONFLOW_API_KEY=your_api_key_here
+OPEN_ROUTER_API_KEY=your_api_key_here
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your_supabase_key
 ```
+
+If you want to switch providers manually, you can also configure optional keys such as `SILICONFLOW_API_KEY`, but the current default runtime uses `OPEN_ROUTER_API_KEY`.
 
 ### 3. Start Service
 
@@ -101,6 +103,7 @@ Directly visit a link with ID, for example: `http://localhost:8000/?id=uq6UWRgzM
 Visit conference paper list pages:
 - NeurIPS 2025: `http://localhost:8000/?conference=neurips_2025`
 - ICLR 2026: `http://localhost:8000/?conference=iclr_2026`
+- ICML 2025: `http://localhost:8000/?conference=icml_2025`
 
 Supports keyword search (title, abstract, keywords), use Shift+Enter shortcut for search.
 
@@ -124,7 +127,7 @@ uv run uvicorn app:app --host 0.0.0.0 --port 8000
 1. Connect your GitHub repository to Render.
 2. Select Docker environment for build.
 3. Configure environment variables in Environment:
-   - `SILICONFLOW_API_KEY`
+   - `OPEN_ROUTER_API_KEY`
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
 

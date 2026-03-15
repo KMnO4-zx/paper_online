@@ -11,7 +11,7 @@
 
 *&emsp;&emsp;做这个工具的起因是，老板说要看足够多的论文才会有很好的 idea 或 insight ，我觉得很对。（感谢王老师的读论文 Prompt）所以用 dify 联合飞书做了工作流，但是每次只手动输入能看一篇；后来做了好几个仓库用于批量拉取AI会议的论文，这样我可以直接看然后跳转到 dify 工作流；再然后我觉得 dify 太慢了，于是 vibe 了一个更快的工具 paper insight，直接在本地就能快速分析论文，看看摘要、关键词、相关工作推荐等，觉得有潜力就收藏到zotero里精读；我又觉得每次新的会议出来我就得新搞一个仓库太麻烦了，于是写了一个通用的爬虫脚本，能批量导入会议论文；最后我觉得如果能直接在这个工具里浏览会议论文就更好了，于是又加了一个会议浏览的功能，支持分页和关键词搜索。so，果然省事才是第一生产力。如果你喜欢这个项目，欢迎点个star哦~*
 
-&emsp;&emsp;Paper Insight 是一个基于 FastAPI 和 Supabase 的在线论文分析工具，利用 LLM 技术为用户提供论文摘要、关键词提取、相关工作推荐等功能，帮助研究人员快速理解和分析学术论文。
+&emsp;&emsp;Paper Insight 是一个基于 FastAPI 和 Supabase 的在线论文分析工具，利用 LLM 技术为用户提供快速论文分析和交互式对话能力，帮助研究人员快速理解和筛选学术论文。
 
 &emsp;&emsp;本项目旨在辅助快速浏览 AI 会议论文。通过 AI 快速生成摘要，用户可决定是否将论文收藏至 Zotero 进行精读。目前仅支持 OpenReview 平台上的论文，作为作者个人论文阅读工作流的一部分，暂无计划支持其他平台。
 
@@ -19,7 +19,7 @@
 
 &emsp;&emsp;已支持：[ICLR 2026](https://paper-online.onrender.com/?conference=iclr_2026), [NeurIPS 2025](https://paper-online.onrender.com/?conference=neurips_2025), [ICML 2025](https://paper-online.onrender.com/?conference=icml_2025)
 
-> *注：LLM 使用 OpenRouter 接入 Step-3.5-Flash(Free) 模型，因为其免费且性能较好，适合当前的论文分析需求。后续将支持更多会议论文，并统一格式。*
+> *注：默认 LLM 提供商为 OpenRouter，当前使用 `stepfun/step-3.5-flash:free`。后续将支持更多会议论文，并统一格式。*
 
 ### 🤔 为什么不用 [cool papers](https://papers.cool/)？
 
@@ -38,7 +38,7 @@
 ## ✨ 功能特性
 
 ### 📄 论文分析
-- **快速分析**：输入 OpenReview 论文 ID，AI 自动生成论文摘要、关键词和相关工作推荐
+- **快速分析**：输入 OpenReview 论文 ID，AI 会回答 4 个核心问题：是否开源代码、论文解决什么任务、使用什么评估指标、为什么能优于 baseline
 - **智能缓存**：分析结果自动保存到数据库，再次访问秒开
 - **重新分析**：支持重新生成分析结果
 - **流式输出**：实时显示 AI 分析过程，无需等待
@@ -71,13 +71,15 @@ uv sync
 
 ### 2. 配置环境变量
 
-在项目根目录下创建 `.env` 文件，并填入以下内容：
+在 `backend/` 目录下创建 `.env` 文件，并填入以下内容：
 
 ```bash
-SILICONFLOW_API_KEY=your_api_key_here
+OPEN_ROUTER_API_KEY=your_api_key_here
 NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your_supabase_key
 ```
+
+如果你想手动切换 LLM 提供商，也可以额外配置 `SILICONFLOW_API_KEY` 等可选变量，但当前默认运行路径使用的是 `OPEN_ROUTER_API_KEY`。
 
 ### 3. 启动服务
 
@@ -103,6 +105,7 @@ uv run uvicorn app:app --reload --host 127.0.0.1 --port 8000
 访问会议论文列表页面：
 - NeurIPS 2025: `http://localhost:8000/?conference=neurips_2025`
 - ICLR 2026: `http://localhost:8000/?conference=iclr_2026`
+- ICML 2025: `http://localhost:8000/?conference=icml_2025`
 
 支持关键词搜索（标题、摘要、关键词），使用 Shift+Enter 快捷键搜索。
 
@@ -126,7 +129,7 @@ uv run uvicorn app:app --host 0.0.0.0 --port 8000
 1. 将 GitHub 仓库连接到 Render。
 2. 选择 Docker 环境进行构建。
 3. 在 Environment 中配置环境变量：
-   - `SILICONFLOW_API_KEY`
+   - `OPEN_ROUTER_API_KEY`
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
 
