@@ -6,7 +6,7 @@ WORKDIR /app
 COPY ./ /app
 
 # 安装依赖
-RUN pip install --no-cache-dir fastapi uvicorn openai python-dotenv requests sse-starlette supabase
+RUN pip install --no-cache-dir fastapi uvicorn openai python-dotenv requests sse-starlette supabase tiktoken
 
 # 在 backend 目录下启动，使用 $PORT 环境变量
 WORKDIR /app/backend
