@@ -29,6 +29,50 @@
 
 如果先部署了后端代码但 Supabase 尚未执行 RPC SQL，系统会自动回退到旧的 Python 搜索逻辑，功能不会中断，但不会获得新的性能优化收益。
 
+### 1.2 第二阶段 FTS 升级说明
+
+第二阶段会继续复用同名 RPC：
+
+- `search_papers_optimized`
+- `count_papers_optimized`
+
+但其内部实现会从 `ILIKE` 升级为 PostgreSQL Full Text Search，使用 `english` 词典，并新增 3 个 GIN 索引：
+
+- `idx_papers_title_fts`
+- `idx_papers_abstract_fts`
+- `idx_keywords_keyword_fts`
+
+部署顺序仍然建议：
+
+1. 在 Supabase SQL Editor 中重新执行最新的 `migrate_db.sql`
+2. 验证两个 RPC 查询有结果
+3. 重启后端服务
+
+可用下面的 SQL 做验证：
+
+```sql
+select *
+from search_papers_optimized(
+  'transformers',
+  'NeurIPS 2025',
+  true,
+  true,
+  true,
+  5,
+  0
+);
+
+select count_papers_optimized(
+  'transformers',
+  'NeurIPS 2025',
+  true,
+  true,
+  true
+);
+```
+
+如果第二阶段 SQL 尚未部署，后端仍会回退到第一阶段搜索逻辑，但不会获得 FTS 的词干化和相关性排序提升。
+
 ### 2. 导入数据
 
 运行导入脚本，从爬取的数据中加载论文：

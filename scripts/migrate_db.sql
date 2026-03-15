@@ -19,6 +19,12 @@ CREATE TABLE IF NOT EXISTS keywords (
 );
 
 CREATE INDEX IF NOT EXISTS idx_keywords_paper_id ON keywords(paper_id);
+CREATE INDEX IF NOT EXISTS idx_papers_title_fts
+ON papers USING GIN (to_tsvector('english', COALESCE(title, '')));
+CREATE INDEX IF NOT EXISTS idx_papers_abstract_fts
+ON papers USING GIN (to_tsvector('english', COALESCE(abstract, '')));
+CREATE INDEX IF NOT EXISTS idx_keywords_keyword_fts
+ON keywords USING GIN (to_tsvector('english', COALESCE(keyword, '')));
 
 -- Add new columns to papers table
 ALTER TABLE papers ADD COLUMN IF NOT EXISTS venue TEXT;
@@ -44,43 +50,122 @@ RETURNS TABLE(
   llm_response TEXT,
   created_at TIMESTAMPTZ
 ) AS $$
+DECLARE
+  normalized_search_term TEXT;
+  query_text tsquery;
 BEGIN
+  normalized_search_term := NULLIF(BTRIM(search_term), '');
+
+  IF normalized_search_term IS NULL THEN
+    RETURN QUERY
+    SELECT
+      p.id,
+      p.title,
+      p.abstract,
+      p.venue,
+      p.primary_area,
+      p.llm_response,
+      p.created_at
+    FROM papers p
+    WHERE
+      (venue_prefix IS NULL OR venue_prefix = '' OR p.venue ILIKE venue_prefix || '%')
+    ORDER BY
+      CASE
+        WHEN p.venue ILIKE '%oral%' THEN 1
+        WHEN p.venue ILIKE '%spotlight%' THEN 2
+        WHEN p.venue ILIKE '%poster%' THEN 3
+        ELSE 4
+      END ASC,
+      p.created_at DESC
+    LIMIT page_limit OFFSET page_offset;
+
+    RETURN;
+  END IF;
+
+  query_text := websearch_to_tsquery('english', normalized_search_term);
+
   RETURN QUERY
-  SELECT
-    p.id,
-    p.title,
-    p.abstract,
-    p.venue,
-    p.primary_area,
-    p.llm_response,
-    p.created_at
-  FROM papers p
-  WHERE
-    (venue_prefix IS NULL OR venue_prefix = '' OR p.venue ILIKE venue_prefix || '%')
-    AND
-    (
-      search_term IS NULL OR search_term = '' OR
+  WITH matched_papers AS (
+    SELECT
+      p.id,
+      p.title,
+      p.abstract,
+      p.venue,
+      p.primary_area,
+      p.llm_response,
+      p.created_at,
       (
-        (search_title AND p.title ILIKE '%' || search_term || '%') OR
-        (search_abstract AND p.abstract ILIKE '%' || search_term || '%') OR
+        CASE
+          WHEN search_title THEN
+            ts_rank(
+              setweight(to_tsvector('english', COALESCE(p.title, '')), 'A'),
+              query_text
+            )
+          ELSE 0
+        END
+        +
+        CASE
+          WHEN search_abstract THEN
+            ts_rank(
+              setweight(to_tsvector('english', COALESCE(p.abstract, '')), 'B'),
+              query_text
+            )
+          ELSE 0
+        END
+        +
+        CASE
+          WHEN search_keywords THEN
+            COALESCE((
+              SELECT MAX(
+                ts_rank(
+                  setweight(to_tsvector('english', COALESCE(k.keyword, '')), 'C'),
+                  query_text
+                )
+              )
+              FROM keywords k
+              WHERE k.paper_id = p.id
+                AND to_tsvector('english', COALESCE(k.keyword, '')) @@ query_text
+            ), 0)
+          ELSE 0
+        END
+      ) AS rank_score
+    FROM papers p
+    WHERE
+      (venue_prefix IS NULL OR venue_prefix = '' OR p.venue ILIKE venue_prefix || '%')
+      AND
+      (
+        (search_title AND to_tsvector('english', COALESCE(p.title, '')) @@ query_text)
+        OR
+        (search_abstract AND to_tsvector('english', COALESCE(p.abstract, '')) @@ query_text)
+        OR
         (
           search_keywords AND EXISTS (
             SELECT 1
             FROM keywords k
             WHERE k.paper_id = p.id
-              AND k.keyword ILIKE '%' || search_term || '%'
+              AND to_tsvector('english', COALESCE(k.keyword, '')) @@ query_text
           )
         )
       )
-    )
+  )
+  SELECT
+    mp.id,
+    mp.title,
+    mp.abstract,
+    mp.venue,
+    mp.primary_area,
+    mp.llm_response,
+    mp.created_at
+  FROM matched_papers mp
   ORDER BY
+    mp.rank_score DESC,
     CASE
-      WHEN p.venue ILIKE '%oral%' THEN 1
-      WHEN p.venue ILIKE '%spotlight%' THEN 2
-      WHEN p.venue ILIKE '%poster%' THEN 3
+      WHEN mp.venue ILIKE '%oral%' THEN 1
+      WHEN mp.venue ILIKE '%spotlight%' THEN 2
+      WHEN mp.venue ILIKE '%poster%' THEN 3
       ELSE 4
     END ASC,
-    p.created_at DESC
+    mp.created_at DESC
   LIMIT page_limit OFFSET page_offset;
 END;
 $$ LANGUAGE plpgsql;
@@ -95,25 +180,38 @@ CREATE OR REPLACE FUNCTION count_papers_optimized(
 )
 RETURNS INTEGER AS $$
 DECLARE
+  normalized_search_term TEXT;
+  query_text tsquery;
   total_count INTEGER;
 BEGIN
+  normalized_search_term := NULLIF(BTRIM(search_term), '');
+
+  IF normalized_search_term IS NULL THEN
+    SELECT COUNT(*)::INTEGER INTO total_count
+    FROM papers p
+    WHERE (venue_prefix IS NULL OR venue_prefix = '' OR p.venue ILIKE venue_prefix || '%');
+
+    RETURN total_count;
+  END IF;
+
+  query_text := websearch_to_tsquery('english', normalized_search_term);
+
   SELECT COUNT(*)::INTEGER INTO total_count
   FROM papers p
   WHERE
     (venue_prefix IS NULL OR venue_prefix = '' OR p.venue ILIKE venue_prefix || '%')
     AND
     (
-      search_term IS NULL OR search_term = '' OR
+      (search_title AND to_tsvector('english', COALESCE(p.title, '')) @@ query_text)
+      OR
+      (search_abstract AND to_tsvector('english', COALESCE(p.abstract, '')) @@ query_text)
+      OR
       (
-        (search_title AND p.title ILIKE '%' || search_term || '%') OR
-        (search_abstract AND p.abstract ILIKE '%' || search_term || '%') OR
-        (
-          search_keywords AND EXISTS (
-            SELECT 1
-            FROM keywords k
-            WHERE k.paper_id = p.id
-              AND k.keyword ILIKE '%' || search_term || '%'
-          )
+        search_keywords AND EXISTS (
+          SELECT 1
+          FROM keywords k
+          WHERE k.paper_id = p.id
+            AND to_tsvector('english', COALESCE(k.keyword, '')) @@ query_text
         )
       )
     );
