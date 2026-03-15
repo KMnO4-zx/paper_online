@@ -17,6 +17,17 @@
 - 创建 `authors` 表
 - 创建 `keywords` 表
 - 为 `papers` 表添加 `venue` 和 `primary_area` 列
+- 创建 `search_papers_optimized` 和 `count_papers_optimized` RPC 函数
+
+### 1.1 第一阶段搜索优化部署顺序
+
+第一阶段数据库优化依赖 Supabase RPC 函数。推荐部署顺序：
+
+1. 先在 Supabase SQL Editor 执行最新的 `migrate_db.sql`
+2. 确认 `search_papers_optimized` 和 `count_papers_optimized` 已创建成功
+3. 再部署后端代码
+
+如果先部署了后端代码但 Supabase 尚未执行 RPC SQL，系统会自动回退到旧的 Python 搜索逻辑，功能不会中断，但不会获得新的性能优化收益。
 
 ### 2. 导入数据
 
