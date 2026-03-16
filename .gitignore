@@ -215,6 +215,8 @@ __marimo__/
 # frontend-react
 frontend-react/node_modules/
 frontend-react/dist/
+!frontend-react/src/lib/
+!frontend-react/src/lib/**
 
 # claude
 .claude
