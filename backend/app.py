@@ -15,7 +15,7 @@ from pydantic import BaseModel
 
 from llm import SiliconflowLLM, OpenRouterLLM
 from utils import reader, get_openreview_info, ReaderError, OpenReviewError, truncate_content_for_llm
-from database import get_paper, save_paper, update_llm_response, get_chat_sessions, create_chat_session, get_chat_messages, save_chat_message, delete_chat_session, delete_last_chat_message_pair, get_conference_papers, search_all_papers
+from database import get_paper, save_paper, update_llm_response, get_chat_sessions, create_chat_session, get_chat_messages, save_chat_message, delete_chat_session, delete_last_chat_message_pair, get_conference_papers, search_all_papers, DatabaseError
 from chat import ChatSession
 from background_tasks import BackgroundAnalyzer
 
@@ -104,6 +104,8 @@ async def get_paper_info(paper_id: str):
         paper_info = get_or_fetch_paper_info(paper_id)
     except OpenReviewError as e:
         raise HTTPException(status_code=502, detail=str(e))
+    except DatabaseError as e:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
 
     if not paper_info:
         raise HTTPException(status_code=404, detail="Paper not found")
@@ -120,6 +122,9 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
             paper_info = await asyncio.to_thread(get_or_fetch_paper_info, paper_id)
         except OpenReviewError as e:
             yield {"event": "error", "data": str(e)}
+            return
+        except DatabaseError:
+            yield {"event": "error", "data": "数据库暂时不可用，请稍后重试"}
             return
 
         # Check if we can return cached analysis
@@ -162,6 +167,8 @@ async def chat_with_paper(paper_id: str, req: ChatRequest):
             paper_info = await asyncio.to_thread(get_or_fetch_paper_info, paper_id)
         except OpenReviewError as e:
             raise HTTPException(status_code=502, detail=str(e))
+        except DatabaseError as e:
+            raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
 
         context_parts = []
         if paper_info.get("pdf"):
@@ -182,37 +189,49 @@ async def chat_with_paper(paper_id: str, req: ChatRequest):
         chat_sessions[req.session_id] = session
 
     async def generate():
-        if is_new_session:
-            create_chat_session(req.session_id, req.user_id, paper_id, req.message[:50])
+        try:
+            if is_new_session:
+                create_chat_session(req.session_id, req.user_id, paper_id, req.message[:50])
 
-        chunks = []
-        async for chunk in session.send_stream(req.message):
-            chunks.append(chunk)
-            yield {"data": chunk}
+            chunks = []
+            async for chunk in session.send_stream(req.message):
+                chunks.append(chunk)
+                yield {"data": chunk}
 
-        # Persist messages
-        save_chat_message(req.session_id, "user", req.message)
-        save_chat_message(req.session_id, "assistant", "".join(chunks))
+            # Persist messages
+            save_chat_message(req.session_id, "user", req.message)
+            save_chat_message(req.session_id, "assistant", "".join(chunks))
 
-        yield {"event": "done", "data": ""}
+            yield {"event": "done", "data": ""}
+        except DatabaseError:
+            yield {"event": "error", "data": "数据库暂时不可用，请稍后重试"}
 
     return EventSourceResponse(generate())
 
 
 @app.get("/paper/{paper_id}/chat/sessions")
 async def list_chat_sessions(paper_id: str, user_id: str):
-    return get_chat_sessions(user_id, paper_id)
+    try:
+        return get_chat_sessions(user_id, paper_id)
+    except DatabaseError as e:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
 
 
 @app.get("/chat/{session_id}/messages")
 async def list_chat_messages(session_id: str):
-    return get_chat_messages(session_id)
+    try:
+        return get_chat_messages(session_id)
+    except DatabaseError as e:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
 
 
 @app.delete("/chat/{session_id}")
 async def delete_session(session_id: str):
     chat_sessions.pop(session_id, None)
-    delete_chat_session(session_id)
+    try:
+        delete_chat_session(session_id)
+    except DatabaseError as e:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
     return {"ok": True}
 
 
@@ -226,13 +245,18 @@ async def regenerate_chat(paper_id: str, req: ChatRequest):
         chat_sessions.pop(req.session_id, None)
         session = None
 
-    delete_last_chat_message_pair(req.session_id)
+    try:
+        delete_last_chat_message_pair(req.session_id)
+    except DatabaseError as e:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
 
     if not session:
         try:
             paper_info = await asyncio.to_thread(get_or_fetch_paper_info, paper_id)
         except OpenReviewError as e:
             raise HTTPException(status_code=502, detail=str(e))
+        except DatabaseError as e:
+            raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
 
         context_parts = []
         if paper_info.get("pdf"):
@@ -247,15 +271,18 @@ async def regenerate_chat(paper_id: str, req: ChatRequest):
         chat_sessions[req.session_id] = session
 
     async def generate():
-        chunks = []
-        async for chunk in session.send_stream(req.message):
-            chunks.append(chunk)
-            yield {"data": chunk}
+        try:
+            chunks = []
+            async for chunk in session.send_stream(req.message):
+                chunks.append(chunk)
+                yield {"data": chunk}
 
-        save_chat_message(req.session_id, "user", req.message)
-        save_chat_message(req.session_id, "assistant", "".join(chunks))
+            save_chat_message(req.session_id, "user", req.message)
+            save_chat_message(req.session_id, "assistant", "".join(chunks))
 
-        yield {"event": "done", "data": ""}
+            yield {"event": "done", "data": ""}
+        except DatabaseError:
+            yield {"event": "error", "data": "数据库暂时不可用，请稍后重试"}
 
     return EventSourceResponse(generate())
 
@@ -276,11 +303,14 @@ async def get_conference_papers_endpoint(
         raise HTTPException(status_code=404, detail="Conference not found")
 
     offset = (page - 1) * limit
-    papers, total = get_conference_papers(
-        venue_name, offset, limit,
-        search if search else None,
-        search_title, search_abstract, search_keywords
-    )
+    try:
+        papers, total = get_conference_papers(
+            venue_name, offset, limit,
+            search if search else None,
+            search_title, search_abstract, search_keywords
+        )
+    except DatabaseError as e:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
 
     return {
         "papers": papers,
@@ -300,11 +330,14 @@ async def search_all_papers_endpoint(
     search_keywords: bool = True
 ):
     offset = (page - 1) * limit
-    papers, total = search_all_papers(
-        offset, limit,
-        search if search else None,
-        search_title, search_abstract, search_keywords
-    )
+    try:
+        papers, total = search_all_papers(
+            offset, limit,
+            search if search else None,
+            search_title, search_abstract, search_keywords
+        )
+    except DatabaseError as e:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
 
     return {
         "papers": papers,
@@ -315,14 +348,39 @@ async def search_all_papers_endpoint(
 
 
 # 静态文件服务
-FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+LEGACY_FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
+REACT_FRONTEND_DIST_DIR = Path(__file__).parent.parent / "frontend-react" / "dist"
 IMAGES_DIR = Path(__file__).parent.parent / "images"
 
+
+def get_frontend_index() -> Path:
+    react_index = REACT_FRONTEND_DIST_DIR / "index.html"
+    if react_index.exists():
+        return react_index
+    return LEGACY_FRONTEND_DIR / "index.html"
+
+
 app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
-app.mount("/css", StaticFiles(directory=FRONTEND_DIR / "css"), name="css")
-app.mount("/js", StaticFiles(directory=FRONTEND_DIR / "js"), name="js")
+app.mount("/assets", StaticFiles(directory=REACT_FRONTEND_DIST_DIR / "assets", check_dir=False), name="assets")
+app.mount("/css", StaticFiles(directory=LEGACY_FRONTEND_DIR / "css", check_dir=False), name="css")
+app.mount("/js", StaticFiles(directory=LEGACY_FRONTEND_DIR / "js", check_dir=False), name="js")
 
 
 @app.get("/")
 async def serve_frontend():
-    return FileResponse(FRONTEND_DIR / "index.html")
+    return FileResponse(get_frontend_index())
+
+
+@app.get("/search")
+async def serve_search_frontend():
+    return FileResponse(get_frontend_index())
+
+
+@app.get("/conference/{venue}")
+async def serve_conference_frontend(venue: str):
+    return FileResponse(get_frontend_index())
+
+
+@app.get("/papers/{paper_id}")
+async def serve_paper_frontend(paper_id: str):
+    return FileResponse(get_frontend_index())

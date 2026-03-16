@@ -30,7 +30,9 @@ class OpenReviewError(Exception):
 
 
 def truncate_content_for_llm(text: str, max_tokens: int = LLM_CONTENT_TOKEN_LIMIT) -> str:
-    token_ids = _TOKEN_ENCODING.encode(text)
+    # Some PDFs contain strings like "<|endoftext|>" literally.
+    # They should be treated as normal text instead of special tokens.
+    token_ids = _TOKEN_ENCODING.encode(text, disallowed_special=())
     token_count = len(token_ids)
 
     if token_count <= max_tokens:

@@ -65,8 +65,17 @@
 
 ### 1. 安装依赖
 
+后端依赖：
+
 ```bash
 uv sync
+```
+
+前端依赖：
+
+```bash
+cd frontend-react
+npm install
 ```
 
 ### 2. 配置环境变量
@@ -81,57 +90,122 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your_supabase_key
 
 如果你想手动切换 LLM 提供商，也可以额外配置 `SILICONFLOW_API_KEY` 等可选变量，但当前默认运行路径使用的是 `OPEN_ROUTER_API_KEY`。
 
-### 3. 启动服务
+### 3. 开发模式启动
+
+先启动后端：
 
 ```bash
 cd backend
 uv run uvicorn app:app --reload --host 127.0.0.1 --port 8000
 ```
 
+再在另一个终端启动 React 前端：
+
+```bash
+cd frontend-react
+npm run dev
+```
+
 ### 4. 访问页面
 
-服务启动后，打开浏览器访问以下地址：
+开发模式下：
+- 前端：`http://127.0.0.1:5173`
+- 后端 API：`http://127.0.0.1:8000`
 
-**方式一：主页访问**
+推荐访问路径：
+- 首页：`http://127.0.0.1:5173/`
+- 全局搜索：`http://127.0.0.1:5173/search?q=agent`
+- 会议页：`http://127.0.0.1:5173/conference/iclr_2026`
+- 论文详情页：`http://127.0.0.1:5173/papers/uq6UWRgzMr`
 
-访问 `http://localhost:8000/`，在输入框中填入 OpenReview 论文 ID，点击"分析"。
-
-**方式二：通过 URL 参数访问**
-
-直接访问带 ID 的链接，例如：`http://localhost:8000/?id=uq6UWRgzMr`
-
-**方式三：浏览会议论文**
-
-访问会议论文列表页面：
-- NeurIPS 2025: `http://localhost:8000/?conference=neurips_2025`
-- ICLR 2026: `http://localhost:8000/?conference=iclr_2026`
-- ICML 2025: `http://localhost:8000/?conference=icml_2025`
-
-支持关键词搜索（标题、摘要、关键词），使用 Shift+Enter 快捷键搜索。
+搜索仅在以下两种方式下触发：
+- 点击搜索按钮
+- 按 `Shift+Enter`
 
 ## 停止服务
 
-在终端按 `Ctrl + C` 停止服务。
+在两个终端分别按 `Ctrl + C`，停止后端和前端开发服务。
 
-## 生产部署
+## 部署
 
-### 本地部署
+### 部署模式
 
-运行以下命令启动服务：
+当前有两种运行模式：
+
+1. 开发模式
+   - FastAPI 和 `frontend-react` 分开启动。
+   - 适合本地开发和调试 UI。
+
+2. 生产模式
+   - 先构建 `frontend-react`。
+   - 再由 FastAPI 直接托管 React 构建产物。
+   - 生产环境只需要运行一个服务。
+
+### 本地模拟生产运行
+
+先构建前端：
+
+```bash
+cd frontend-react
+npm run build
+```
+
+再启动 FastAPI：
 
 ```bash
 cd backend
 uv run uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
+然后访问：
+
+```text
+http://127.0.0.1:8000
+```
+
+### Docker 部署
+
+仓库已经包含可直接使用的 [Dockerfile](./Dockerfile)。
+它会自动：
+- 构建 `frontend-react`
+- 将 `frontend-react/dist` 复制进最终镜像
+- 只启动 FastAPI
+
+构建镜像：
+
+```bash
+docker build -t paper-insight .
+```
+
+运行容器：
+
+```bash
+docker run -p 8000:8000 \
+  -e OPEN_ROUTER_API_KEY=your_api_key_here \
+  -e NEXT_PUBLIC_SUPABASE_URL=your_supabase_url \
+  -e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your_supabase_key \
+  paper-insight
+```
+
 ### Render 部署
 
+可以，当前这套代码已经可以直接部署到 Render，推荐使用 Docker 方式。
+
+推荐配置：
 1. 将 GitHub 仓库连接到 Render。
-2. 选择 Docker 环境进行构建。
-3. 在 Environment 中配置环境变量：
+2. 创建新的 `Web Service`。
+3. Runtime 选择 `Docker`。
+4. Service Root 选择仓库根目录。
+5. 在 Environment 中配置环境变量：
    - `OPEN_ROUTER_API_KEY`
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
+6. 直接部署。
+
+补充说明：
+- Render 会直接使用现有的 [Dockerfile](./Dockerfile)，不需要单独再建一个前端服务。
+- 生产环境下 React 前端由 FastAPI 直接托管。
+- 如果使用 Render 免费实例，休眠仍然是平台限制，后台任务不会阻止实例休眠。
 
 ## 项目结构
 
@@ -144,19 +218,11 @@ paper_online/
 │   ├── llm.py          # LLM 调用封装
 │   ├── prompt.py       # 系统提示词
 │   └── utils.py        # 工具函数
-├── frontend/
-│   ├── index.html      # 主页面
-│   ├── css/
-│   │   └── style.css   # 样式文件
-│   └── js/
-│       ├── api.js      # API 客户端
-│       ├── home.js     # 主页逻辑
-│       ├── paper.js    # 论文展示
-│       ├── chat.js     # 对话功能
-│       ├── conference.js  # 会议浏览
-│       ├── online.js   # 在线人数
-│       ├── main.js     # 路由初始化
-│       └── utils.js    # 工具函数
+├── frontend-react/
+│   ├── src/            # React 前端源码
+│   ├── dist/           # 前端构建产物
+│   └── vite.config.ts  # Vite 配置
+├── frontend/           # 旧版静态前端兜底
 ├── scripts/
 │   ├── import_papers.py  # 批量导入论文
 │   └── migrate_db.sql    # 数据库迁移
