@@ -1,6 +1,7 @@
 import logging
 import os
 import time
+from typing import Callable, TypeVar
 
 from supabase import create_client
 
@@ -9,6 +10,7 @@ SUPABASE_KEY = os.getenv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY")
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
 logger = logging.getLogger(__name__)
+T = TypeVar("T")
 
 # Cache for conference/search results
 _conference_cache = {}
@@ -16,11 +18,40 @@ _cache_timestamp = {}
 _CACHE_TTL_SECONDS = 86400
 
 
+class DatabaseError(Exception):
+    """Raised when database access fails after retries."""
+    pass
+
+
+def _run_with_retry(operation: Callable[[], T], context: str, retries: int = 3, delay: float = 1.0) -> T:
+    last_error: Exception | None = None
+
+    for attempt in range(retries):
+        try:
+            return operation()
+        except Exception as exc:
+            last_error = exc
+            logger.warning(
+                "Database operation failed for %s (attempt %s/%s): %s",
+                context,
+                attempt + 1,
+                retries,
+                exc,
+            )
+            if attempt < retries - 1:
+                time.sleep(delay)
+
+    raise DatabaseError(f"Database operation failed for {context}") from last_error
+
+
 def get_paper(paper_id: str) -> dict | None:
     if not supabase:
         return None
 
-    result = supabase.table("papers").select("*").eq("id", paper_id).execute()
+    result = _run_with_retry(
+        lambda: supabase.table("papers").select("*").eq("id", paper_id).execute(),
+        f"get_paper:{paper_id}:paper",
+    )
 
     if not result.data:
         return None
@@ -28,17 +59,23 @@ def get_paper(paper_id: str) -> dict | None:
     paper = result.data[0]
 
     # Fetch authors
-    authors_result = (
-        supabase.table("authors")
-        .select("author_name")
-        .eq("paper_id", paper_id)
-        .order("author_order")
-        .execute()
+    authors_result = _run_with_retry(
+        lambda: (
+            supabase.table("authors")
+            .select("author_name")
+            .eq("paper_id", paper_id)
+            .order("author_order")
+            .execute()
+        ),
+        f"get_paper:{paper_id}:authors",
     )
     paper["authors"] = [a["author_name"] for a in (authors_result.data or [])]
 
     # Fetch keywords
-    keywords_result = supabase.table("keywords").select("keyword").eq("paper_id", paper_id).execute()
+    keywords_result = _run_with_retry(
+        lambda: supabase.table("keywords").select("keyword").eq("paper_id", paper_id).execute(),
+        f"get_paper:{paper_id}:keywords",
+    )
     paper["keywords"] = [k["keyword"] for k in (keywords_result.data or [])]
 
     # Construct PDF URL
@@ -60,45 +97,66 @@ def save_paper(paper_info: dict, llm_response: str = None):
         "llm_response": llm_response,
     }
 
-    supabase.table("papers").upsert(data).execute()
+    _run_with_retry(
+        lambda: supabase.table("papers").upsert(data).execute(),
+        f"save_paper:{paper_info['id']}:paper",
+    )
 
     # Save authors
     authors = paper_info.get("authors", [])
     if authors:
-        supabase.table("authors").delete().eq("paper_id", paper_info["id"]).execute()
+        _run_with_retry(
+            lambda: supabase.table("authors").delete().eq("paper_id", paper_info["id"]).execute(),
+            f"save_paper:{paper_info['id']}:delete_authors",
+        )
         author_rows = [
             {"paper_id": paper_info["id"], "author_name": author, "author_order": i}
             for i, author in enumerate(authors)
         ]
-        supabase.table("authors").insert(author_rows).execute()
+        _run_with_retry(
+            lambda: supabase.table("authors").insert(author_rows).execute(),
+            f"save_paper:{paper_info['id']}:insert_authors",
+        )
 
     # Save keywords
     keywords = paper_info.get("keywords", [])
     if keywords:
-        supabase.table("keywords").delete().eq("paper_id", paper_info["id"]).execute()
+        _run_with_retry(
+            lambda: supabase.table("keywords").delete().eq("paper_id", paper_info["id"]).execute(),
+            f"save_paper:{paper_info['id']}:delete_keywords",
+        )
         keyword_rows = [
             {"paper_id": paper_info["id"], "keyword": keyword} for keyword in keywords
         ]
-        supabase.table("keywords").insert(keyword_rows).execute()
+        _run_with_retry(
+            lambda: supabase.table("keywords").insert(keyword_rows).execute(),
+            f"save_paper:{paper_info['id']}:insert_keywords",
+        )
 
 
 def update_llm_response(paper_id: str, response: str):
     if not supabase:
         return
 
-    supabase.table("papers").update({"llm_response": response}).eq("id", paper_id).execute()
+    _run_with_retry(
+        lambda: supabase.table("papers").update({"llm_response": response}).eq("id", paper_id).execute(),
+        f"update_llm_response:{paper_id}",
+    )
 
 
 def get_chat_sessions(user_id: str, paper_id: str) -> list:
     if not supabase:
         return []
-    result = (
-        supabase.table("chat_sessions")
-        .select("*")
-        .eq("user_id", user_id)
-        .eq("paper_id", paper_id)
-        .order("created_at", desc=True)
-        .execute()
+    result = _run_with_retry(
+        lambda: (
+            supabase.table("chat_sessions")
+            .select("*")
+            .eq("user_id", user_id)
+            .eq("paper_id", paper_id)
+            .order("created_at", desc=True)
+            .execute()
+        ),
+        f"get_chat_sessions:{user_id}:{paper_id}",
     )
     return result.data or []
 
@@ -106,20 +164,26 @@ def get_chat_sessions(user_id: str, paper_id: str) -> list:
 def create_chat_session(session_id: str, user_id: str, paper_id: str, title: str):
     if not supabase:
         return
-    supabase.table("chat_sessions").insert(
-        {"id": session_id, "user_id": user_id, "paper_id": paper_id, "title": title}
-    ).execute()
+    _run_with_retry(
+        lambda: supabase.table("chat_sessions").insert(
+            {"id": session_id, "user_id": user_id, "paper_id": paper_id, "title": title}
+        ).execute(),
+        f"create_chat_session:{session_id}",
+    )
 
 
 def get_chat_messages(session_id: str) -> list:
     if not supabase:
         return []
-    result = (
-        supabase.table("chat_messages")
-        .select("role, content, created_at")
-        .eq("session_id", session_id)
-        .order("created_at")
-        .execute()
+    result = _run_with_retry(
+        lambda: (
+            supabase.table("chat_messages")
+            .select("role, content, created_at")
+            .eq("session_id", session_id)
+            .order("created_at")
+            .execute()
+        ),
+        f"get_chat_messages:{session_id}",
     )
     return result.data or []
 
@@ -127,32 +191,47 @@ def get_chat_messages(session_id: str) -> list:
 def save_chat_message(session_id: str, role: str, content: str):
     if not supabase:
         return
-    supabase.table("chat_messages").insert(
-        {"session_id": session_id, "role": role, "content": content}
-    ).execute()
+    _run_with_retry(
+        lambda: supabase.table("chat_messages").insert(
+            {"session_id": session_id, "role": role, "content": content}
+        ).execute(),
+        f"save_chat_message:{session_id}:{role}",
+    )
 
 
 def delete_chat_session(session_id: str):
     if not supabase:
         return
-    supabase.table("chat_messages").delete().eq("session_id", session_id).execute()
-    supabase.table("chat_sessions").delete().eq("id", session_id).execute()
+    _run_with_retry(
+        lambda: supabase.table("chat_messages").delete().eq("session_id", session_id).execute(),
+        f"delete_chat_session:{session_id}:messages",
+    )
+    _run_with_retry(
+        lambda: supabase.table("chat_sessions").delete().eq("id", session_id).execute(),
+        f"delete_chat_session:{session_id}:session",
+    )
 
 
 def delete_last_chat_message_pair(session_id: str):
     """Delete the last user+assistant message pair from a session."""
     if not supabase:
         return
-    rows = (
-        supabase.table("chat_messages")
-        .select("id")
-        .eq("session_id", session_id)
-        .order("created_at", desc=True)
-        .limit(2)
-        .execute()
+    rows = _run_with_retry(
+        lambda: (
+            supabase.table("chat_messages")
+            .select("id")
+            .eq("session_id", session_id)
+            .order("created_at", desc=True)
+            .limit(2)
+            .execute()
+        ),
+        f"delete_last_chat_message_pair:{session_id}:fetch",
     )
     for r in (rows.data or []):
-        supabase.table("chat_messages").delete().eq("id", r["id"]).execute()
+        _run_with_retry(
+            lambda r=r: supabase.table("chat_messages").delete().eq("id", r["id"]).execute(),
+            f"delete_last_chat_message_pair:{session_id}:delete:{r['id']}",
+        )
 
 
 def _build_cache_key(
@@ -464,11 +543,14 @@ def get_unanalyzed_papers(limit: int = 10) -> list:
     if not supabase:
         return []
 
-    result = (
-        supabase.table("papers")
-        .select("id, title, venue")
-        .is_("llm_response", "null")
-        .limit(limit)
-        .execute()
+    result = _run_with_retry(
+        lambda: (
+            supabase.table("papers")
+            .select("id, title, venue")
+            .is_("llm_response", "null")
+            .limit(limit)
+            .execute()
+        ),
+        f"get_unanalyzed_papers:{limit}",
     )
     return result.data or []

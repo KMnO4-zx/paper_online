@@ -1,0 +1,10 @@
+.git
+.gitignore
+.venv
+.pytest_cache
+__pycache__
+.DS_Store
+app/node_modules
+frontend-react/node_modules
+frontend-react/dist
+crawled_data

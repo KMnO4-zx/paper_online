@@ -63,8 +63,17 @@ English | [简体中文](./README_zh.md)
 
 ### 1. Install Dependencies
 
+Backend dependencies:
+
 ```bash
 uv sync
+```
+
+Frontend dependencies:
+
+```bash
+cd frontend-react
+npm install
 ```
 
 ### 2. Configure Environment Variables
@@ -79,57 +88,117 @@ NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your_supabase_key
 
 If you want to switch providers manually, you can also configure optional keys such as `SILICONFLOW_API_KEY`, but the current default runtime uses `OPEN_ROUTER_API_KEY`.
 
-### 3. Start Service
+### 3. Start in Development Mode
+
+Start the backend:
 
 ```bash
 cd backend
 uv run uvicorn app:app --reload --host 127.0.0.1 --port 8000
 ```
 
+Start the React frontend in another terminal:
+
+```bash
+cd frontend-react
+npm run dev
+```
+
 ### 4. Access the Application
 
-After the service starts, open your browser and visit:
+Development mode:
+- Frontend: `http://127.0.0.1:5173`
+- Backend API: `http://127.0.0.1:8000`
 
-**Method 1: Homepage Access**
+Recommended routes:
+- Home: `http://127.0.0.1:5173/`
+- Global search: `http://127.0.0.1:5173/search?q=agent`
+- Conference page: `http://127.0.0.1:5173/conference/iclr_2026`
+- Paper detail: `http://127.0.0.1:5173/papers/uq6UWRgzMr`
 
-Visit `http://localhost:8000/`, enter an OpenReview paper ID in the input box, and click "Analyze".
-
-**Method 2: Direct URL Access**
-
-Directly visit a link with ID, for example: `http://localhost:8000/?id=uq6UWRgzMr`
-
-**Method 3: Browse Conference Papers**
-
-Visit conference paper list pages:
-- NeurIPS 2025: `http://localhost:8000/?conference=neurips_2025`
-- ICLR 2026: `http://localhost:8000/?conference=iclr_2026`
-- ICML 2025: `http://localhost:8000/?conference=icml_2025`
-
-Supports keyword search (title, abstract, keywords), use Shift+Enter shortcut for search.
+Search is triggered by clicking the search button or pressing `Shift+Enter`.
 
 ## Stop Service
 
-Press `Ctrl + C` in the terminal to stop the service.
+Press `Ctrl + C` in each terminal to stop the backend and frontend dev servers.
 
-## Production Deployment
+## Deployment
 
-### Local Deployment
+### Deployment Modes
 
-Run the following command to start the service:
+There are now two modes:
+
+1. Development mode
+   - Run FastAPI and `frontend-react` separately.
+   - Use this for local development and UI debugging.
+
+2. Production mode
+   - Build `frontend-react` into static assets.
+   - FastAPI serves the built React app directly.
+   - Only one service needs to run in production.
+
+### Local Production Run
+
+Build the frontend:
+
+```bash
+cd frontend-react
+npm run build
+```
+
+Then start FastAPI:
 
 ```bash
 cd backend
 uv run uvicorn app:app --host 0.0.0.0 --port 8000
 ```
 
+Open:
+
+```text
+http://127.0.0.1:8000
+```
+
+### Docker Deployment
+
+This repository includes a production-ready [Dockerfile](./Dockerfile).
+It builds `frontend-react`, copies `frontend-react/dist` into the final image, and starts FastAPI only.
+
+Build the image:
+
+```bash
+docker build -t paper-insight .
+```
+
+Run the container:
+
+```bash
+docker run -p 8000:8000 \
+  -e OPEN_ROUTER_API_KEY=your_api_key_here \
+  -e NEXT_PUBLIC_SUPABASE_URL=your_supabase_url \
+  -e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your_supabase_key \
+  paper-insight
+```
+
 ### Render Deployment
 
-1. Connect your GitHub repository to Render.
-2. Select Docker environment for build.
-3. Configure environment variables in Environment:
+Yes, the current repository can be deployed to Render directly using Docker.
+
+Recommended setup:
+1. Connect the GitHub repository to Render.
+2. Create a new `Web Service`.
+3. Choose `Docker` as the runtime.
+4. Use the repository root as the service root.
+5. Configure environment variables:
    - `OPEN_ROUTER_API_KEY`
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
+6. Deploy.
+
+Notes:
+- Render will use the existing [Dockerfile](./Dockerfile); no separate frontend service is needed.
+- The React frontend is served by FastAPI in production.
+- On Render free instances, sleeping is still a product constraint. Background tasks do not prevent the instance from sleeping.
 
 ## Project Structure
 
@@ -142,19 +211,11 @@ paper_online/
 │   ├── llm.py          # LLM API wrapper
 │   ├── prompt.py       # System prompts
 │   └── utils.py        # Utility functions
-├── frontend/
-│   ├── index.html      # Main page
-│   ├── css/
-│   │   └── style.css   # Stylesheet
-│   └── js/
-│       ├── api.js      # API client
-│       ├── home.js     # Homepage logic
-│       ├── paper.js    # Paper display
-│       ├── chat.js     # Chat functionality
-│       ├── conference.js  # Conference browsing
-│       ├── online.js   # Online user count
-│       ├── main.js     # Route initialization
-│       └── utils.js    # Utility functions
+├── frontend-react/
+│   ├── src/            # React frontend source code
+│   ├── dist/           # Built frontend assets
+│   └── vite.config.ts  # Vite config
+├── frontend/           # Legacy static frontend fallback
 ├── scripts/
 │   ├── import_papers.py  # Batch import papers
 │   └── migrate_db.sql    # Database migration

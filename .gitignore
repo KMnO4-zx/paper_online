@@ -212,6 +212,9 @@ __marimo__/
 # Mac OS
 .DS_Store
 
+# frontend-react
+frontend-react/node_modules/
+frontend-react/dist/
 
 # claude
 .claude
