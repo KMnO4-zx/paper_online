@@ -258,7 +258,7 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
   };
 
   return (
-    <section className="flex h-full min-h-[32rem] max-h-[calc(100vh-10rem)] flex-col overflow-hidden rounded-[28px] bg-white shadow-sm ring-1 ring-black/5">
+    <section className="flex h-full min-h-[32rem] max-h-[calc(100vh-10rem)] flex-col overflow-hidden rounded-[28px] bg-white shadow-sm ring-1 ring-black/5 lg:min-h-[36rem] xl:max-h-none">
       <div className="flex items-center justify-between border-b border-[#eef2f7] px-4 py-4">
         <div className="flex items-center gap-2">
           <MessageSquare className="h-4 w-4 text-[#ff9900]" />
@@ -304,7 +304,7 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
         }`}
       >
         <div className="flex min-h-0 flex-col">
-          <div ref={messagesViewportRef} className="flex-1 overflow-y-auto px-4 py-4">
+          <div ref={messagesViewportRef} className="flex-1 overflow-y-auto overscroll-contain px-4 py-4">
             {isLoadingMessages ? (
               <div className="flex items-center gap-2 text-sm text-[#728095]">
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -397,7 +397,7 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
               </Button>
             </div>
           </div>
-          <div className="h-[calc(100%-3.25rem)] overflow-y-auto p-3">
+          <div className="h-[calc(100%-3.25rem)] overflow-y-auto overscroll-contain p-3">
             {isLoadingSessions ? (
               <div className="flex items-center gap-2 text-sm text-[#728095]">
                 <Loader2 className="h-4 w-4 animate-spin" />

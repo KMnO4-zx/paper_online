@@ -145,7 +145,7 @@ export function PaperPage({ paperId }: PaperPageProps) {
         返回
       </Button>
 
-      <div className="grid gap-6 xl:grid-cols-[minmax(0,1.55fr)_minmax(24rem,0.95fr)] 2xl:grid-cols-[minmax(0,1.7fr)_minmax(26rem,1.02fr)]">
+      <div className="grid gap-6 xl:items-start xl:grid-cols-[minmax(0,1.55fr)_minmax(24rem,0.95fr)] 2xl:grid-cols-[minmax(0,1.7fr)_minmax(26rem,1.02fr)]">
         <div className="space-y-6">
           <section className="rounded-[32px] bg-white p-6 shadow-sm ring-1 ring-black/5">
             {paperLoading ? (
@@ -266,12 +266,12 @@ export function PaperPage({ paperId }: PaperPageProps) {
             ) : analysisError ? (
               <div className="mt-6 rounded-2xl bg-[#fff1f2] p-4 text-[#b91c1c]">{analysisError}</div>
             ) : (
-              <RichContent content={analysisText} className="markdown-body mt-6 text-base leading-8 text-[#334155]" />
+              <RichContent content={analysisText} analysisMode className="markdown-body mt-6 text-base leading-8 text-[#334155]" />
             )}
           </section>
         </div>
 
-        <div className="xl:sticky xl:top-6 xl:h-[calc(100vh-3rem)]">
+        <div className="min-h-0 xl:sticky xl:top-6 xl:self-start xl:h-[calc(100vh-8rem)] xl:overflow-hidden">
           <ChatPanel paperId={paperId} />
         </div>
       </div>

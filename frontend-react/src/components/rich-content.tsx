@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 
 import { renderInlineContent, renderMarkdown, renderMath } from '@/lib/content';
 
@@ -6,18 +6,19 @@ interface RichContentProps {
   content: string;
   className?: string;
   inline?: boolean;
+  analysisMode?: boolean;
 }
 
-export function RichContent({ content, className, inline = false }: RichContentProps) {
+export function RichContent({ content, className, inline = false, analysisMode = false }: RichContentProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const html = useMemo(
-    () => (inline ? renderInlineContent(content) : renderMarkdown(content)),
-    [content, inline],
+    () => (inline ? renderInlineContent(content) : renderMarkdown(content, { analysisMode })),
+    [analysisMode, content, inline],
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     renderMath(containerRef.current);
-  }, [html]);
+  });
 
   return (
     <div

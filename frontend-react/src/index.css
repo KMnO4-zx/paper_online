@@ -46,10 +46,12 @@
   }
   html {
     scroll-behavior: smooth;
+    overscroll-behavior-y: none;
   }
   body {
     @apply bg-[#F3F4F6] text-foreground antialiased;
     font-family: 'Inter', sans-serif;
+    overscroll-behavior-y: none;
   }
   h1, h2, h3, h4, h5, h6 {
     font-family: 'Noto Serif SC', serif;

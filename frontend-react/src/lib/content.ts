@@ -1,3 +1,6 @@
+import { marked } from 'marked';
+import renderMathInElement from 'katex/contrib/auto-render';
+
 function escapeHtml(content: string): string {
   return content
     .replaceAll('&', '&amp;')
@@ -7,35 +10,142 @@ function escapeHtml(content: string): string {
     .replaceAll("'", '&#39;');
 }
 
+const CODE_SEGMENT_PATTERN = /```[\s\S]*?```|`[^`\n]+`/g;
+
+function maskCodeSegments(content: string): { masked: string; segments: string[] } {
+  const segments: string[] = [];
+  const masked = content.replace(CODE_SEGMENT_PATTERN, (segment) => {
+    const token = `__CODE_SEGMENT_${segments.length}__`;
+    segments.push(segment);
+    return token;
+  });
+
+  return { masked, segments };
+}
+
+function unmaskCodeSegments(content: string, segments: string[]): string {
+  return content.replace(/__CODE_SEGMENT_(\d+)__/g, (_, index) => segments[Number(index)] ?? '');
+}
+
+function looksLikeInlineMath(expression: string): boolean {
+  const value = expression.trim();
+  if (!value) {
+    return false;
+  }
+
+  if (/\\[A-Za-z]+|[_^{}]/.test(value)) {
+    return true;
+  }
+
+  if (/\s/.test(value)) {
+    return false;
+  }
+
+  if (!/[A-Za-z]/.test(value) && !/[=<>+\-*/]/.test(value)) {
+    return false;
+  }
+
+  return /^[A-Za-z0-9()[\].,:;+\-*/=<>|]+$/.test(value);
+}
+
+function normalizeEscapedInlineMath(content: string): string {
+  return content
+    .replace(/\\\$([^\n]*?)(\\\$|\$)/g, (match, expression) =>
+      looksLikeInlineMath(expression) ? `$${expression}$` : match,
+    )
+    .replace(/\$([^\n]*?)\\\$/g, (match, expression) =>
+      looksLikeInlineMath(expression) ? `$${expression}$` : match,
+    );
+}
+
+export function normalizeMathContent(content: string): string {
+  if (!content) {
+    return '';
+  }
+
+  const { masked, segments } = maskCodeSegments(content);
+  const normalized = normalizeEscapedInlineMath(
+    masked
+      .replace(/\\\$\$([\s\S]+?)\\\$\$/g, (_, expression) => `$$${expression}$$`)
+      .replace(/\\\$\$([\s\S]+?)\$\$/g, (_, expression) => `$$${expression}$$`)
+      .replace(/\$\$([\s\S]+?)\\\$\$/g, (_, expression) => `$$${expression}$$`),
+  );
+
+  return unmaskCodeSegments(normalized, segments);
+}
+
+interface MarkdownRenderOptions {
+  analysisMode?: boolean;
+}
+
+function normalizeMarkdownSyntax(content: string, options: MarkdownRenderOptions = {}): string {
+  if (!content) {
+    return '';
+  }
+
+  const { masked, segments } = maskCodeSegments(content);
+  let normalized = masked
+    .replace(/^([ \t]{0,3})\\(#{1,6})(?=\s|\S)/gm, '$1$2')
+    .replace(/^(#{1,6})(\S)/gm, '$1 $2');
+
+  if (options.analysisMode) {
+    const lines = normalized.split('\n');
+    normalized = lines
+      .map((line, index) => {
+        const trimmed = line.trim();
+        if (!trimmed) {
+          return line;
+        }
+
+        const leadingWhitespace = line.match(/^\s*/)?.[0] ?? '';
+        const previousLine = index > 0 ? lines[index - 1].trim() : '';
+
+        if (!previousLine) {
+          const numberedSectionMatch = trimmed.match(/^(\d+[.、:：)]\s*.+)$/);
+          if (numberedSectionMatch && trimmed.length <= 80) {
+            return `${leadingWhitespace}## ${numberedSectionMatch[1]}`;
+          }
+        }
+
+        const looseHashHeadingMatch = trimmed.match(/^#+\s*.+$/);
+        if (looseHashHeadingMatch) {
+          const [, hashes = '', title = ''] = trimmed.match(/^(#{1,6})\s*(.+)$/) ?? [];
+          if (hashes && title) {
+            return `${leadingWhitespace}${hashes} ${title}`;
+          }
+        }
+
+        return line;
+      })
+      .join('\n');
+  }
+
+  return unmaskCodeSegments(normalized, segments);
+}
+
 export function renderInlineContent(content: string): string {
   if (!content) {
     return '';
   }
 
-  return escapeHtml(content).replaceAll('\n', '<br />');
+  return escapeHtml(normalizeMathContent(content)).replaceAll('\n', '<br />');
 }
 
-export function renderMarkdown(content: string): string {
+export function renderMarkdown(content: string, options: MarkdownRenderOptions = {}): string {
   if (!content) {
     return '';
   }
 
-  if (window.marked?.parse) {
-    return window.marked.parse(content);
-  }
-
-  const paragraphs = escapeHtml(content)
-    .split(/\n{2,}/)
-    .map((paragraph) => `<p>${paragraph.replaceAll('\n', '<br />')}</p>`);
-  return paragraphs.join('');
+  const normalizedContent = normalizeMarkdownSyntax(normalizeMathContent(content), options);
+  return marked.parse(normalizedContent, { async: false }) as string;
 }
 
 export function renderMath(element: HTMLElement | null): void {
-  if (!element || !window.renderMathInElement) {
+  if (!element) {
     return;
   }
 
-  window.renderMathInElement(element, {
+  renderMathInElement(element, {
     delimiters: [
       { left: '$$', right: '$$', display: true },
       { left: '$', right: '$', display: false },
