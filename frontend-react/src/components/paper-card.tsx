@@ -1,6 +1,7 @@
 import { Eye, ExternalLink, FileText, Heart } from 'lucide-react';
 import { useState } from 'react';
 
+import { RichContent } from '@/components/rich-content';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { getVenueParts, normalizeKeywords } from '@/lib/content';
@@ -63,7 +64,7 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
       </div>
 
       <h3 className="mb-3 text-xl font-semibold leading-snug text-[#1f2937] transition-colors group-hover:text-[#ff7a00]">
-        {paper.title}
+        <RichContent content={paper.title} inline className="paper-title-math" />
       </h3>
 
       {keywords.length ? (

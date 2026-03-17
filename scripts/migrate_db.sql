@@ -76,7 +76,8 @@ BEGIN
         WHEN p.venue ILIKE '%poster%' THEN 3
         ELSE 4
       END ASC,
-      p.created_at DESC
+      COALESCE(LOWER(p.title), '') ASC,
+      p.id ASC
     LIMIT page_limit OFFSET page_offset;
 
     RETURN;
@@ -165,7 +166,8 @@ BEGIN
       WHEN mp.venue ILIKE '%poster%' THEN 3
       ELSE 4
     END ASC,
-    mp.created_at DESC
+    COALESCE(LOWER(mp.title), '') ASC,
+    mp.id ASC
   LIMIT page_limit OFFSET page_offset;
 END;
 $$ LANGUAGE plpgsql;

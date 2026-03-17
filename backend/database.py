@@ -375,6 +375,40 @@ def _paper_type_priority(paper: dict) -> int:
     return 4
 
 
+def _normalized_title(paper: dict) -> str:
+    return (paper.get("title") or "").casefold()
+
+
+def _stable_paper_sort_key(paper: dict) -> tuple[int, str, str]:
+    return (
+        _paper_type_priority(paper),
+        _normalized_title(paper),
+        paper.get("id") or "",
+    )
+
+
+def _legacy_search_rank_score(
+    paper: dict,
+    normalized_search: str,
+    search_title: bool,
+    search_abstract: bool,
+    matched_keyword_paper_ids: set[str],
+) -> int:
+    score = 0
+    title = (paper.get("title") or "").casefold()
+    abstract = (paper.get("abstract") or "").casefold()
+    paper_id = paper.get("id") or ""
+
+    if search_title and normalized_search in title:
+        score += 3
+    if search_abstract and normalized_search in abstract:
+        score += 2
+    if paper_id in matched_keyword_paper_ids:
+        score += 1
+
+    return score
+
+
 def _search_papers_legacy(
     venue_prefix: str | None,
     offset: int,
@@ -387,6 +421,8 @@ def _search_papers_legacy(
     all_papers = []
     batch_size = 1000
     current_offset = 0
+    matched_keyword_paper_ids: set[str] = set()
+    normalized_search = (search or "").casefold()
 
     while True:
         for retry in range(3):
@@ -405,9 +441,10 @@ def _search_papers_legacy(
                             .ilike("keyword", f"%{search}%")
                             .execute()
                         )
-                        paper_ids_from_keywords = list(
-                            {k["paper_id"] for k in (keywords_result.data or [])}
-                        )
+                        matched_keyword_paper_ids = {
+                            k["paper_id"] for k in (keywords_result.data or [])
+                        }
+                        paper_ids_from_keywords = list(matched_keyword_paper_ids)
                         if paper_ids_from_keywords:
                             conditions.append(f"id.in.({','.join(paper_ids_from_keywords)})")
 
@@ -440,7 +477,22 @@ def _search_papers_legacy(
 
         current_offset += batch_size
 
-    sorted_papers = sorted(all_papers, key=_paper_type_priority)
+    if search:
+        sorted_papers = sorted(
+            all_papers,
+            key=lambda paper: (
+                -_legacy_search_rank_score(
+                    paper,
+                    normalized_search,
+                    search_title,
+                    search_abstract,
+                    matched_keyword_paper_ids,
+                ),
+                *_stable_paper_sort_key(paper),
+            ),
+        )
+    else:
+        sorted_papers = sorted(all_papers, key=_stable_paper_sort_key)
     paginated_papers = sorted_papers[offset : offset + limit]
     paginated_papers, _ = _load_keywords_for_papers(paginated_papers)
     return paginated_papers, len(sorted_papers)

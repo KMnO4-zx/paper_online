@@ -158,7 +158,9 @@ export function PaperPage({ paperId }: PaperPageProps) {
             ) : paper ? (
               <div className="space-y-6">
                 <div>
-                  <h1 className="text-3xl font-semibold leading-tight text-[#172033]">{paper.title}</h1>
+                  <h1 className="text-3xl font-semibold leading-tight text-[#172033]">
+                    <RichContent content={paper.title} inline className="paper-title-math" />
+                  </h1>
                   <div className="mt-4 flex flex-wrap gap-2.5">
                     <Badge variant="outline" className="border-blue-200 bg-blue-50 px-3 py-1 text-sm text-blue-700">
                       {venue.label}

@@ -1,15 +1,19 @@
 import { useEffect, useMemo, useRef } from 'react';
 
-import { renderMarkdown, renderMath } from '@/lib/content';
+import { renderInlineContent, renderMarkdown, renderMath } from '@/lib/content';
 
 interface RichContentProps {
   content: string;
   className?: string;
+  inline?: boolean;
 }
 
-export function RichContent({ content, className }: RichContentProps) {
+export function RichContent({ content, className, inline = false }: RichContentProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
-  const html = useMemo(() => renderMarkdown(content), [content]);
+  const html = useMemo(
+    () => (inline ? renderInlineContent(content) : renderMarkdown(content)),
+    [content, inline],
+  );
 
   useEffect(() => {
     renderMath(containerRef.current);

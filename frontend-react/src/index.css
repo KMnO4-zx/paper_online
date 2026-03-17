@@ -320,4 +320,19 @@
     overflow-y: hidden;
     padding: 0.5rem 0;
   }
+
+  .paper-title-math {
+    color: inherit;
+  }
+
+  .paper-title-math .katex {
+    font-size: 1em;
+  }
+
+  .paper-title-math .katex-display {
+    display: inline-block;
+    margin: 0;
+    max-width: 100%;
+    vertical-align: baseline;
+  }
 }

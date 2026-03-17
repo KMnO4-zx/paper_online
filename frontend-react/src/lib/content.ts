@@ -7,6 +7,14 @@ function escapeHtml(content: string): string {
     .replaceAll("'", '&#39;');
 }
 
+export function renderInlineContent(content: string): string {
+  if (!content) {
+    return '';
+  }
+
+  return escapeHtml(content).replaceAll('\n', '<br />');
+}
+
 export function renderMarkdown(content: string): string {
   if (!content) {
     return '';
