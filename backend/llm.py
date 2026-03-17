@@ -113,12 +113,19 @@ class StepLLM(BaseLLM):
         self.model = model
         self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
 
+class ArkPlanLLM(BaseLLM):
+    def __init__(self, api_key: str = None, base_url: str = None, model: str = "ark-code-latest"):
+        self.api_key = api_key if api_key else os.getenv("ARKPLAN_API_KEY")
+        self.base_url = base_url if base_url else "https://ark.cn-beijing.volces.com/api/coding/v3"
+        self.model = model
+        self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+
 if __name__ == "__main__":
     import asyncio
 
     async def test():
         try:
-            llm = OpenRouterLLM()
+            llm = ArkPlanLLM()
             print(f"API Key configured: {bool(llm.api_key)}")
             print(f"Base URL: {llm.base_url}")
             print(f"Model: {llm.model}")
