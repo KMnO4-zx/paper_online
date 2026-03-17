@@ -47,11 +47,11 @@ export function HomePage() {
           </div>
 
           <div className="space-y-4">
-            <h1 className="max-w-3xl text-4xl font-semibold leading-tight tracking-tight text-[#172033] sm:text-5xl">
-              更快地批量发现和阅读会议论文
+            <h1 className="max-w-3xl text-4xl font-semibold leading-[1.18] tracking-tight text-[#172033] sm:text-5xl">
+              用 AI 批量浏览 AI 会议论文，再决定哪些值得精读
             </h1>
             <p className="max-w-2xl text-lg leading-8 text-[#64748b]">
-              搜索题目、摘要与关键词，查看 AI 分析，直接围绕论文发起对话。
+              辅助快速浏览 AI 会议论文，通过自动生成 AI 分析，帮你快速判断哪些论文值得收藏到 Zotero 继续精读，作为 AI 论文阅读流程中的第一道筛选关卡。
             </p>
           </div>
         </div>
