@@ -15,6 +15,9 @@ interface PaperPageProps {
   paperId: string;
 }
 
+const BACK_BUTTON_FADE_DISTANCE = 72;
+const BACK_BUTTON_MAX_TRANSLATE_Y = 8;
+
 export function PaperPage({ paperId }: PaperPageProps) {
   const [paper, setPaper] = useState<Paper | null>(null);
   const [paperError, setPaperError] = useState<string | null>(null);
@@ -25,12 +28,24 @@ export function PaperPage({ paperId }: PaperPageProps) {
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [marks, setMarks] = useState(() => getPaperMarks(paperId));
   const [isLikeAnimating, setIsLikeAnimating] = useState(false);
+  const [backButtonProgress, setBackButtonProgress] = useState(0);
   const analysisRequestIdRef = useRef(0);
   const analysisAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     setMarks(getPaperMarks(paperId));
   }, [paperId]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const nextProgress = Math.min(Math.max(window.scrollY / BACK_BUTTON_FADE_DISTANCE, 0), 1);
+      setBackButtonProgress(nextProgress);
+    };
+
+    handleScroll();
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
 
   useEffect(() => {
     let active = true;
@@ -127,23 +142,35 @@ export function PaperPage({ paperId }: PaperPageProps) {
   const keywords = normalizeKeywords(paper?.keywords);
   const openReviewUrl = `https://openreview.net/forum?id=${paperId}`;
   const pdfUrl = paper?.pdf || `https://openreview.net/pdf?id=${paperId}`;
+  const isBackButtonHidden = backButtonProgress >= 1;
+  const backButtonOpacity = 1 - backButtonProgress;
 
   return (
     <div className="mx-auto max-w-[96rem] animate-fade-in">
-      <Button
-        variant="ghost"
-        className="mb-4 rounded-full px-0 text-[#728095]"
-        onClick={() => {
-          if (window.history.length > 1) {
-            window.history.back();
-            return;
-          }
-          navigate('/');
+      <div
+        className="mb-4 origin-left transition-[opacity,transform] duration-150"
+        style={{
+          opacity: backButtonOpacity,
+          transform: `translateY(${-BACK_BUTTON_MAX_TRANSLATE_Y * backButtonProgress}px)`,
+          pointerEvents: isBackButtonHidden ? 'none' : 'auto',
         }}
       >
-        <ChevronLeft className="mr-1 h-4 w-4" />
-        返回
-      </Button>
+        <Button
+          variant="ghost"
+          className="rounded-full px-0 text-[#728095]"
+          tabIndex={isBackButtonHidden ? -1 : 0}
+          onClick={() => {
+            if (window.history.length > 1) {
+              window.history.back();
+              return;
+            }
+            navigate('/');
+          }}
+        >
+          <ChevronLeft className="mr-1 h-4 w-4" />
+          返回
+        </Button>
+      </div>
 
       <div className="grid gap-6 xl:items-start xl:grid-cols-[minmax(0,1.55fr)_minmax(24rem,0.95fr)] 2xl:grid-cols-[minmax(0,1.7fr)_minmax(26rem,1.02fr)]">
         <div className="space-y-6">
