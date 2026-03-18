@@ -18,6 +18,7 @@ from utils import reader, get_openreview_info, ReaderError, OpenReviewError, tru
 from database import get_paper, save_paper, update_llm_response, get_chat_sessions, create_chat_session, get_chat_messages, save_chat_message, delete_chat_session, delete_last_chat_message_pair, get_conference_papers, search_all_papers, DatabaseError
 from chat import ChatSession
 from background_tasks import BackgroundAnalyzer
+from markdown_utils import normalize_llm_markdown
 
 logger = logging.getLogger(__name__)
 
@@ -129,7 +130,10 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
 
         # Check if we can return cached analysis
         if not reanalyze and paper_info.get("llm_response"):
-            yield {"data": paper_info["llm_response"]}
+            normalized_response = normalize_llm_markdown(paper_info["llm_response"], analysis_mode=True)
+            if normalized_response != paper_info["llm_response"]:
+                await asyncio.to_thread(update_llm_response, paper_id, normalized_response)
+            yield {"data": normalized_response}
             yield {"event": "done", "data": ""}
             return
 
@@ -151,7 +155,8 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
             full_response.append(chunk)
             yield {"data": chunk}
 
-        update_llm_response(paper_id, "".join(full_response))
+        normalized_response = normalize_llm_markdown("".join(full_response), analysis_mode=True)
+        await asyncio.to_thread(update_llm_response, paper_id, normalized_response)
         yield {"event": "done", "data": ""}
 
     return EventSourceResponse(generate())
@@ -200,7 +205,7 @@ async def chat_with_paper(paper_id: str, req: ChatRequest):
 
             # Persist messages
             save_chat_message(req.session_id, "user", req.message)
-            save_chat_message(req.session_id, "assistant", "".join(chunks))
+            save_chat_message(req.session_id, "assistant", normalize_llm_markdown("".join(chunks)))
 
             yield {"event": "done", "data": ""}
         except DatabaseError:

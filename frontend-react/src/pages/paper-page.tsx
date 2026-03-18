@@ -25,6 +25,7 @@ export function PaperPage({ paperId }: PaperPageProps) {
   const [analysisText, setAnalysisText] = useState('');
   const [analysisStatus, setAnalysisStatus] = useState('正在获取论文信息...');
   const [analysisLoading, setAnalysisLoading] = useState(true);
+  const [analysisStreaming, setAnalysisStreaming] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
   const [marks, setMarks] = useState(() => getPaperMarks(paperId));
   const [isLikeAnimating, setIsLikeAnimating] = useState(false);
@@ -85,6 +86,7 @@ export function PaperPage({ paperId }: PaperPageProps) {
     setAnalysisText('');
     setAnalysisError(null);
     setAnalysisLoading(true);
+    setAnalysisStreaming(true);
     setAnalysisStatus(reanalyze ? '正在重新分析论文...' : '正在获取论文信息...');
 
     try {
@@ -108,10 +110,12 @@ export function PaperPage({ paperId }: PaperPageProps) {
             }
             if (event === 'error') {
               setAnalysisLoading(false);
+              setAnalysisStreaming(false);
               setAnalysisError(data || '分析失败');
             }
             if (event === 'done') {
               setAnalysisLoading(false);
+              setAnalysisStreaming(false);
               setAnalysisStatus('');
             }
           },
@@ -122,6 +126,7 @@ export function PaperPage({ paperId }: PaperPageProps) {
         return;
       }
       setAnalysisLoading(false);
+      setAnalysisStreaming(false);
       setAnalysisError(error instanceof Error ? error.message : '分析失败');
     } finally {
       if (analysisAbortRef.current === controller) {
@@ -293,7 +298,12 @@ export function PaperPage({ paperId }: PaperPageProps) {
             ) : analysisError ? (
               <div className="mt-6 rounded-2xl bg-[#fff1f2] p-4 text-[#b91c1c]">{analysisError}</div>
             ) : (
-              <RichContent content={analysisText} analysisMode className="markdown-body mt-6 text-base leading-8 text-[#334155]" />
+              <RichContent
+                content={analysisText}
+                analysisMode
+                isStreaming={analysisStreaming}
+                className="markdown-body analysis-markdown mt-6 text-base leading-7 text-[#334155]"
+              />
             )}
           </section>
         </div>

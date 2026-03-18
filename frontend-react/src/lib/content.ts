@@ -1,16 +1,13 @@
-import { marked } from 'marked';
-import renderMathInElement from 'katex/contrib/auto-render';
-
-function escapeHtml(content: string): string {
-  return content
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
+interface MarkdownNormalizationOptions {
+  analysisMode?: boolean;
 }
 
-const CODE_SEGMENT_PATTERN = /```[\s\S]*?```|`[^`\n]+`/g;
+interface StreamingMarkdownSplit {
+  stableContent: string;
+  unstableContent: string;
+}
+
+const CODE_SEGMENT_PATTERN = /```[\s\S]*?(?:```|$)|`[^`\n]*`/g;
 
 function maskCodeSegments(content: string): { masked: string; segments: string[] } {
   const segments: string[] = [];
@@ -25,6 +22,10 @@ function maskCodeSegments(content: string): { masked: string; segments: string[]
 
 function unmaskCodeSegments(content: string, segments: string[]): string {
   return content.replace(/__CODE_SEGMENT_(\d+)__/g, (_, index) => segments[Number(index)] ?? '');
+}
+
+function normalizeLineEndings(content: string): string {
+  return content.replace(/\r\n?/g, '\n');
 }
 
 function looksLikeInlineMath(expression: string): boolean {
@@ -58,101 +59,306 @@ function normalizeEscapedInlineMath(content: string): string {
     );
 }
 
+function normalizeBracketMath(content: string): string {
+  return content
+    .replace(/\\\[\s*([\s\S]+?)\s*\\\]/g, (_, expression) => `$$\n${String(expression).trim()}\n$$`)
+    .replace(/\\\((.+?)\\\)/g, (match, expression) =>
+      looksLikeInlineMath(String(expression)) ? `$${String(expression).trim()}$` : match,
+    );
+}
+
+function normalizeHeadingMarkerPrefix(line: string): string {
+  return line.replace(/^([ \t]{0,3})([＃#]{1,6})(?=\s*\S)/, (_, leading, hashes: string) => (
+    `${leading}${'#'.repeat(hashes.length)}`
+  ));
+}
+
+function isLikelyHeadingFragment(fragment: string): boolean {
+  const normalized = normalizeHeadingMarkerPrefix(fragment).trim();
+  const match = normalized.match(/^(#{1,6})\s*(.+)$/);
+  if (!match) {
+    return false;
+  }
+
+  const title = match[2].trim();
+  if (!title || title.length > 120 || /https?:\/\//.test(title)) {
+    return false;
+  }
+
+  return true;
+}
+
+function expandInlineHeadingLine(line: string): string[] {
+  const normalizedLine = normalizeHeadingMarkerPrefix(line);
+  const inlineHeadingMatch = normalizedLine.match(/^(.+\S)\s+(#{1,6}\s*.+)$/);
+
+  if (!inlineHeadingMatch) {
+    return [normalizedLine];
+  }
+
+  const [, prefix, headingFragment] = inlineHeadingMatch;
+  if (!isLikelyHeadingFragment(headingFragment)) {
+    return [normalizedLine];
+  }
+
+  return [prefix, '', headingFragment.trimStart()];
+}
+
+function normalizeMarkdownLine(line: string): string {
+  return line
+    .replace(/^([ \t]{0,3})\\([＃#]{1,6})(?=\s|\S)/, (_, leading, hashes: string) => `${leading}${'#'.repeat(hashes.length)}`)
+    .replace(/^(#{1,6})(\S)/, '$1 $2')
+    .replace(/^([ \t]{0,3}[-*+])(\S)/, '$1 $2')
+    .replace(/^([ \t]{0,3}\d+[.)、])(\S)/, '$1 $2');
+}
+
+function shouldAddBlockSpacing(line: string, options: MarkdownNormalizationOptions): boolean {
+  if (!line) {
+    return false;
+  }
+
+  if (/^#{1,6}\s/.test(line)) {
+    return true;
+  }
+
+  if (options.analysisMode && /^[-*+]\s/.test(line)) {
+    return true;
+  }
+
+  return false;
+}
+
+function countUnescapedDoubleDollar(line: string): number {
+  let count = 0;
+
+  for (let index = 0; index < line.length - 1; index += 1) {
+    if (line[index] !== '$' || line[index + 1] !== '$') {
+      continue;
+    }
+
+    let backslashes = 0;
+    for (let cursor = index - 1; cursor >= 0 && line[cursor] === '\\'; cursor -= 1) {
+      backslashes += 1;
+    }
+
+    if (backslashes % 2 === 0) {
+      count += 1;
+      index += 1;
+    }
+  }
+
+  return count;
+}
+
+function findUnclosedFenceStart(content: string): number | null {
+  const lines = content.split('\n');
+  let inFence: '```' | '~~~' | null = null;
+  let fenceStart: number | null = null;
+  let offset = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    const marker = trimmed.startsWith('```') ? '```' : trimmed.startsWith('~~~') ? '~~~' : null;
+
+    if (!marker) {
+      offset += line.length + 1;
+      continue;
+    }
+
+    if (!inFence) {
+      inFence = marker;
+      fenceStart = offset;
+    } else if (marker === inFence) {
+      inFence = null;
+      fenceStart = null;
+    }
+
+    offset += line.length + 1;
+  }
+
+  return inFence ? fenceStart : null;
+}
+
+function findUnclosedBlockMathStart(content: string): number | null {
+  const lines = content.split('\n');
+  let inFence: '```' | '~~~' | null = null;
+  let inBlockMath = false;
+  let blockMathStart: number | null = null;
+  let offset = 0;
+
+  for (const line of lines) {
+    const trimmed = line.trimStart();
+    const marker = trimmed.startsWith('```') ? '```' : trimmed.startsWith('~~~') ? '~~~' : null;
+
+    if (marker) {
+      if (!inFence) {
+        inFence = marker;
+      } else if (marker === inFence) {
+        inFence = null;
+      }
+      offset += line.length + 1;
+      continue;
+    }
+
+    if (!inFence) {
+      const delimiterCount = countUnescapedDoubleDollar(line);
+      if (delimiterCount % 2 === 1) {
+        if (!inBlockMath) {
+          inBlockMath = true;
+          blockMathStart = offset;
+        } else {
+          inBlockMath = false;
+          blockMathStart = null;
+        }
+      }
+    }
+
+    offset += line.length + 1;
+  }
+
+  return inBlockMath ? blockMathStart : null;
+}
+
+function hasUnclosedInlineDelimiter(line: string, delimiter: '$' | '`'): boolean {
+  let count = 0;
+
+  for (let index = 0; index < line.length; index += 1) {
+    if (line[index] !== delimiter) {
+      continue;
+    }
+
+    let backslashes = 0;
+    for (let cursor = index - 1; cursor >= 0 && line[cursor] === '\\'; cursor -= 1) {
+      backslashes += 1;
+    }
+
+    if (backslashes % 2 === 1) {
+      continue;
+    }
+
+    if (delimiter === '$') {
+      const previousIsDollar = index > 0 && line[index - 1] === '$';
+      const nextIsDollar = index + 1 < line.length && line[index + 1] === '$';
+      if (previousIsDollar || nextIsDollar) {
+        continue;
+      }
+    }
+
+    count += 1;
+  }
+
+  return count % 2 === 1;
+}
+
+function moveTrailingLineToUnstable(stableContent: string, unstableContent: string): StreamingMarkdownSplit {
+  const boundary = stableContent.lastIndexOf('\n');
+  if (boundary < 0) {
+    return {
+      stableContent: '',
+      unstableContent: stableContent + unstableContent,
+    };
+  }
+
+  return {
+    stableContent: stableContent.slice(0, boundary + 1),
+    unstableContent: stableContent.slice(boundary + 1) + unstableContent,
+  };
+}
+
 export function normalizeMathContent(content: string): string {
   if (!content) {
     return '';
   }
 
-  const { masked, segments } = maskCodeSegments(content);
+  const { masked, segments } = maskCodeSegments(normalizeLineEndings(content));
   const normalized = normalizeEscapedInlineMath(
-    masked
-      .replace(/\\\$\$([\s\S]+?)\\\$\$/g, (_, expression) => `$$${expression}$$`)
+    normalizeBracketMath(
+      masked
+        .replace(/\\\$\$([\s\S]+?)\\\$\$/g, (_, expression) => `$$${expression}$$`)
       .replace(/\\\$\$([\s\S]+?)\$\$/g, (_, expression) => `$$${expression}$$`)
-      .replace(/\$\$([\s\S]+?)\\\$\$/g, (_, expression) => `$$${expression}$$`),
+        .replace(/\$\$([\s\S]+?)\\\$\$/g, (_, expression) => `$$${expression}$$`),
+    ),
   );
 
   return unmaskCodeSegments(normalized, segments);
 }
 
-interface MarkdownRenderOptions {
-  analysisMode?: boolean;
-}
-
-function normalizeMarkdownSyntax(content: string, options: MarkdownRenderOptions = {}): string {
+function normalizeMarkdownSyntax(content: string, options: MarkdownNormalizationOptions = {}): string {
   if (!content) {
     return '';
   }
 
   const { masked, segments } = maskCodeSegments(content);
-  let normalized = masked
-    .replace(/^([ \t]{0,3})\\(#{1,6})(?=\s|\S)/gm, '$1$2')
-    .replace(/^(#{1,6})(\S)/gm, '$1 $2');
+  const lines = masked
+    .split('\n')
+    .flatMap(expandInlineHeadingLine)
+    .map(normalizeMarkdownLine);
+  const normalizedLines: string[] = [];
 
-  if (options.analysisMode) {
-    const lines = normalized.split('\n');
-    normalized = lines
-      .map((line, index) => {
-        const trimmed = line.trim();
-        if (!trimmed) {
-          return line;
-        }
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    const trimmed = line.trim();
+    const previousTrimmed = normalizedLines.at(-1)?.trim() ?? '';
+    const nextTrimmed = lines[index + 1]?.trim() ?? '';
+    const needsSpacing = shouldAddBlockSpacing(trimmed, options);
 
-        const leadingWhitespace = line.match(/^\s*/)?.[0] ?? '';
-        const previousLine = index > 0 ? lines[index - 1].trim() : '';
+    if (needsSpacing && previousTrimmed) {
+      normalizedLines.push('');
+    }
 
-        if (!previousLine) {
-          const numberedSectionMatch = trimmed.match(/^(\d+[.、:：)]\s*.+)$/);
-          if (numberedSectionMatch && trimmed.length <= 80) {
-            return `${leadingWhitespace}## ${numberedSectionMatch[1]}`;
-          }
-        }
+    normalizedLines.push(line);
 
-        const looseHashHeadingMatch = trimmed.match(/^#+\s*.+$/);
-        if (looseHashHeadingMatch) {
-          const [, hashes = '', title = ''] = trimmed.match(/^(#{1,6})\s*(.+)$/) ?? [];
-          if (hashes && title) {
-            return `${leadingWhitespace}${hashes} ${title}`;
-          }
-        }
-
-        return line;
-      })
-      .join('\n');
+    if (needsSpacing && nextTrimmed) {
+      normalizedLines.push('');
+    }
   }
 
-  return unmaskCodeSegments(normalized, segments);
+  return unmaskCodeSegments(normalizedLines.join('\n').replace(/\n{3,}/g, '\n\n'), segments).trimEnd();
 }
 
-export function renderInlineContent(content: string): string {
-  if (!content) {
-    return '';
-  }
-
-  return escapeHtml(normalizeMathContent(content)).replaceAll('\n', '<br />');
+export function normalizeMarkdownContent(
+  content: string,
+  options: MarkdownNormalizationOptions = {},
+): string {
+  return normalizeMarkdownSyntax(normalizeMathContent(content), options);
 }
 
-export function renderMarkdown(content: string, options: MarkdownRenderOptions = {}): string {
-  if (!content) {
-    return '';
+export function splitStreamingMarkdown(
+  content: string,
+  options: MarkdownNormalizationOptions = {},
+): StreamingMarkdownSplit {
+  const normalized = normalizeMarkdownContent(content, options);
+  if (!normalized) {
+    return { stableContent: '', unstableContent: '' };
   }
 
-  const normalizedContent = normalizeMarkdownSyntax(normalizeMathContent(content), options);
-  return marked.parse(normalizedContent, { async: false }) as string;
-}
+  let boundary = normalized.length;
+  const openFenceStart = findUnclosedFenceStart(normalized);
+  const openBlockMathStart = findUnclosedBlockMathStart(normalized);
 
-export function renderMath(element: HTMLElement | null): void {
-  if (!element) {
-    return;
+  if (openFenceStart !== null) {
+    boundary = Math.min(boundary, openFenceStart);
   }
 
-  renderMathInElement(element, {
-    delimiters: [
-      { left: '$$', right: '$$', display: true },
-      { left: '$', right: '$', display: false },
-    ],
-    throwOnError: false,
-    strict: false,
-  });
+  if (openBlockMathStart !== null) {
+    boundary = Math.min(boundary, openBlockMathStart);
+  }
+
+  let split: StreamingMarkdownSplit = {
+    stableContent: normalized.slice(0, boundary),
+    unstableContent: normalized.slice(boundary),
+  };
+
+  if (!split.stableContent) {
+    return split;
+  }
+
+  const lastLine = split.stableContent.slice(split.stableContent.lastIndexOf('\n') + 1);
+  if (hasUnclosedInlineDelimiter(lastLine, '$') || hasUnclosedInlineDelimiter(lastLine, '`')) {
+    split = moveTrailingLineToUnstable(split.stableContent, split.unstableContent);
+  }
+
+  return split;
 }
 
 export function normalizeKeywords(keywords: string[] | undefined | null): string[] {

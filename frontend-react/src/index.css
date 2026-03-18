@@ -276,13 +276,19 @@
   .markdown-body p,
   .markdown-body ul,
   .markdown-body ol,
-  .markdown-body blockquote {
+  .markdown-body blockquote,
+  .markdown-body table,
+  .markdown-body pre {
     margin: 0.85rem 0;
   }
 
   .markdown-body ul,
   .markdown-body ol {
     padding-left: 1.5rem;
+  }
+
+  .markdown-body li + li {
+    margin-top: 0.35rem;
   }
 
   .markdown-body code {
@@ -317,10 +323,76 @@
     text-decoration: underline;
   }
 
+  .markdown-body table {
+    width: 100%;
+    border-collapse: collapse;
+    overflow: hidden;
+    border-radius: 1rem;
+    border: 1px solid #dbe3ee;
+  }
+
+  .markdown-body th,
+  .markdown-body td {
+    border: 1px solid #dbe3ee;
+    padding: 0.75rem 0.9rem;
+    text-align: left;
+    vertical-align: top;
+  }
+
+  .markdown-body th {
+    background: #f8fafc;
+    font-weight: 600;
+  }
+
+  .markdown-body hr {
+    margin: 1.25rem 0;
+    border: 0;
+    border-top: 1px solid #e2e8f0;
+  }
+
   .markdown-body .katex-display {
     overflow-x: auto;
     overflow-y: hidden;
     padding: 0.5rem 0;
+  }
+
+  .analysis-markdown h1,
+  .analysis-markdown h2,
+  .analysis-markdown h3,
+  .analysis-markdown h4 {
+    margin: 1rem 0 0.55rem;
+  }
+
+  .analysis-markdown p,
+  .analysis-markdown ul,
+  .analysis-markdown ol,
+  .analysis-markdown blockquote,
+  .analysis-markdown table,
+  .analysis-markdown pre {
+    margin: 0.6rem 0;
+  }
+
+  .analysis-markdown li + li {
+    margin-top: 0.2rem;
+  }
+
+  .analysis-markdown hr {
+    margin: 1rem 0;
+  }
+
+  .analysis-markdown .katex-display {
+    padding: 0.35rem 0;
+  }
+
+  .markdown-body .rich-content-tail {
+    margin: 0.85rem 0 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    border-radius: 1rem;
+    background: #f8fafc;
+    padding: 0.9rem 1rem;
+    font: inherit;
+    color: inherit;
   }
 
   .paper-title-math {

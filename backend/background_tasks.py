@@ -1,6 +1,7 @@
 import asyncio
 import logging
 from database import get_unanalyzed_papers, get_paper, update_llm_response
+from markdown_utils import normalize_llm_markdown
 from utils import reader, ReaderError, truncate_content_for_llm
 
 logger = logging.getLogger(__name__)
@@ -29,6 +30,7 @@ class BackgroundAnalyzer:
                 logger.info(f"[{paper_id}] 生成分析...")
                 user_prompt = f"以下是论文内容：\n{paper_content}"
                 response = await self.llm.get_response(user_prompt)
+                response = normalize_llm_markdown(response, analysis_mode=True)
 
                 await asyncio.to_thread(update_llm_response, paper_id, response)
                 logger.info(f"[{paper_id}] 分析完成: {paper_info.get('title', '')[:50]}")

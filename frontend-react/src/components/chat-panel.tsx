@@ -41,6 +41,7 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
   const [input, setInput] = useState('');
   const [isSending, setIsSending] = useState(false);
+  const [streamingAssistantId, setStreamingAssistantId] = useState<string | null>(null);
   const [isLoadingSessions, setIsLoadingSessions] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [showHistory, setShowHistory] = useState(false);
@@ -60,6 +61,7 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
     setCurrentSessionId(null);
     setMessages([]);
     setLastUserMessage(null);
+    setStreamingAssistantId(null);
     setShowHistory(false);
     setDesktopHistoryMode('hidden');
 
@@ -101,12 +103,14 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
     setCurrentSessionId(window.crypto.randomUUID());
     setMessages([]);
     setLastUserMessage(null);
+    setStreamingAssistantId(null);
   };
 
   const switchSession = async (sessionId: string) => {
     setCurrentSessionId(sessionId);
     setIsLoadingMessages(true);
     setShowHistory(false);
+    setStreamingAssistantId(null);
     try {
       const nextMessages = await fetchChatMessages(sessionId);
       setMessages(toLocalMessages(nextMessages));
@@ -131,6 +135,7 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
       setCurrentSessionId(null);
       setMessages([]);
       setLastUserMessage(null);
+      setStreamingAssistantId(null);
     }
     await refreshSessions();
   };
@@ -192,6 +197,7 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
     ]);
     setInput('');
     setIsSending(true);
+    setStreamingAssistantId(assistantId);
 
     try {
       await sendStream(`/paper/${paperId}/chat`, {
@@ -212,6 +218,7 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
       );
     } finally {
       setIsSending(false);
+      setStreamingAssistantId(null);
     }
   };
 
@@ -235,6 +242,7 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
       return [...pruned, { id: assistantId, role: 'assistant', content: '' }];
     });
     setIsSending(true);
+    setStreamingAssistantId(assistantId);
 
     try {
       await sendStream(`/paper/${paperId}/chat/regenerate`, {
@@ -254,6 +262,7 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
       );
     } finally {
       setIsSending(false);
+      setStreamingAssistantId(null);
     }
   };
 
@@ -329,7 +338,11 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
                       }`}
                     >
                       {message.role === 'assistant' ? (
-                        <RichContent content={message.content || '...'} className="markdown-body text-sm" />
+                        <RichContent
+                          content={message.content || '...'}
+                          isStreaming={isSending && message.id === streamingAssistantId}
+                          className="markdown-body text-sm"
+                        />
                       ) : (
                         message.content
                       )}

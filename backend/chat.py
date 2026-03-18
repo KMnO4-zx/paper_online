@@ -1,4 +1,5 @@
 from prompt import CHAT_SYSTEM_PROMPT
+from markdown_utils import normalize_llm_markdown
 
 class ChatSession:
     def __init__(self, llm, context: str = "", history: list = None):
@@ -17,8 +18,9 @@ class ChatSession:
     async def send(self, user_message: str, **kwargs) -> str:
         self.history.append({"role": "user", "content": user_message})
         reply = await self.llm.chat(self._build_messages(), **kwargs)
-        self.history.append({"role": "assistant", "content": reply})
-        return reply
+        normalized_reply = normalize_llm_markdown(reply)
+        self.history.append({"role": "assistant", "content": normalized_reply})
+        return normalized_reply
 
     async def send_stream(self, user_message: str, **kwargs):
         self.history.append({"role": "user", "content": user_message})
@@ -26,7 +28,7 @@ class ChatSession:
         async for chunk in self.llm.chat_stream(self._build_messages(), **kwargs):
             chunks.append(chunk)
             yield chunk
-        self.history.append({"role": "assistant", "content": "".join(chunks)})
+        self.history.append({"role": "assistant", "content": normalize_llm_markdown("".join(chunks))})
 
     def clear(self):
         self.history.clear()
