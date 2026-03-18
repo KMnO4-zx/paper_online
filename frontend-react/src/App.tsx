@@ -1,21 +1,12 @@
-import { useEffect } from 'react';
-
 import { SiteNavbar } from '@/components/site-navbar';
 import { HomePage } from '@/pages/home-page';
 import { ConferencePage } from '@/pages/conference-page';
 import { PaperPage } from '@/pages/paper-page';
 import { SearchPage } from '@/pages/search-page';
-import { getLegacyRedirect, navigate, useAppLocation } from '@/lib/router';
+import { useAppLocation } from '@/lib/router';
 
 function App() {
   const location = useAppLocation();
-
-  useEffect(() => {
-    const legacyRedirect = getLegacyRedirect(location.pathname, location.search);
-    if (legacyRedirect && legacyRedirect !== `${location.pathname}${location.search}`) {
-      navigate(legacyRedirect, { replace: true });
-    }
-  }, [location.pathname, location.search]);
 
   const pathname = location.pathname;
 

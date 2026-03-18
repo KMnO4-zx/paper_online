@@ -17,7 +17,7 @@
 
 ***&emsp;&emsp;可访问  https://paper-online.onrender.com 在线体验，或按照以下步骤在本地部署。***
 
-&emsp;&emsp;已支持：[ICLR 2026](https://paper-online.onrender.com/?conference=iclr_2026), [NeurIPS 2025](https://paper-online.onrender.com/?conference=neurips_2025), [ICML 2025](https://paper-online.onrender.com/?conference=icml_2025)
+&emsp;&emsp;已支持：[ICLR 2026](https://paper-online.onrender.com/conference/iclr_2026), [NeurIPS 2025](https://paper-online.onrender.com/conference/neurips_2025), [ICML 2025](https://paper-online.onrender.com/conference/icml_2025)
 
 > *注：默认 LLM 提供商为 OpenRouter，当前使用 `stepfun/step-3.5-flash:free`。后续将支持更多会议论文，并统一格式。*
 
@@ -121,6 +121,7 @@ npm run dev
 搜索仅在以下两种方式下触发：
 - 点击搜索按钮
 - 按 `Shift+Enter`
+旧的查询参数链接形式，如 `/?id=...`、`/?conference=...`、`/?search=...`，已经不再支持。
 
 ## 停止服务
 
@@ -162,6 +163,8 @@ uv run uvicorn app:app --host 0.0.0.0 --port 8000
 ```text
 http://127.0.0.1:8000
 ```
+
+如果 `frontend-react/dist` 不存在，FastAPI 现在会直接返回明确错误，提示先构建前端；不会再静默回退到旧静态前端。
 
 ### Docker 部署
 
@@ -222,7 +225,6 @@ paper_online/
 │   ├── src/            # React 前端源码
 │   ├── dist/           # 前端构建产物
 │   └── vite.config.ts  # Vite 配置
-├── frontend/           # 旧版静态前端兜底
 ├── scripts/
 │   ├── import_papers.py  # 批量导入论文
 │   └── migrate_db.sql    # 数据库迁移
@@ -238,6 +240,7 @@ paper_online/
 ```bash
 python scripts/import_papers.py --conference neurips_2025
 python scripts/import_papers.py --conference iclr_2026
+python scripts/import_papers.py --conference icml_2025
 ```
 
 数据文件应放在 `crawled_data/{conference}/` 目录下。

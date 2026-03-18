@@ -348,7 +348,6 @@ async def search_all_papers_endpoint(
 
 
 # 静态文件服务
-LEGACY_FRONTEND_DIR = Path(__file__).parent.parent / "frontend"
 REACT_FRONTEND_DIST_DIR = Path(__file__).parent.parent / "frontend-react" / "dist"
 IMAGES_DIR = Path(__file__).parent.parent / "images"
 
@@ -357,13 +356,14 @@ def get_frontend_index() -> Path:
     react_index = REACT_FRONTEND_DIST_DIR / "index.html"
     if react_index.exists():
         return react_index
-    return LEGACY_FRONTEND_DIR / "index.html"
+    raise HTTPException(
+        status_code=503,
+        detail="Frontend build not found. Run `cd frontend-react && npm run build` first.",
+    )
 
 
 app.mount("/images", StaticFiles(directory=IMAGES_DIR), name="images")
 app.mount("/assets", StaticFiles(directory=REACT_FRONTEND_DIST_DIR / "assets", check_dir=False), name="assets")
-app.mount("/css", StaticFiles(directory=LEGACY_FRONTEND_DIR / "css", check_dir=False), name="css")
-app.mount("/js", StaticFiles(directory=LEGACY_FRONTEND_DIR / "js", check_dir=False), name="js")
 
 
 @app.get("/")

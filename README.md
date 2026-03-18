@@ -15,7 +15,7 @@ English | [简体中文](./README_zh.md)
 
 ***&emsp;&emsp;Visit https://paper-online.onrender.com for online experience, or follow the steps below for local deployment.***
 
-&emsp;&emsp;Supported conferences: [ICLR 2026](https://paper-online.onrender.com/?conference=iclr_2026), [NeurIPS 2025](https://paper-online.onrender.com/?conference=neurips_2025), [ICML 2025](https://paper-online.onrender.com/?conference=icml_2025)
+&emsp;&emsp;Supported conferences: [ICLR 2026](https://paper-online.onrender.com/conference/iclr_2026), [NeurIPS 2025](https://paper-online.onrender.com/conference/neurips_2025), [ICML 2025](https://paper-online.onrender.com/conference/icml_2025)
 
 > *Note: The default LLM provider is OpenRouter, currently using `stepfun/step-3.5-flash:free`. More conferences will be supported with unified format.*
 
@@ -117,6 +117,7 @@ Recommended routes:
 - Paper detail: `http://127.0.0.1:5173/papers/uq6UWRgzMr`
 
 Search is triggered by clicking the search button or pressing `Shift+Enter`.
+Legacy query-style URLs such as `/?id=...`, `/?conference=...`, and `/?search=...` are no longer supported.
 
 ## Stop Service
 
@@ -158,6 +159,8 @@ Open:
 ```text
 http://127.0.0.1:8000
 ```
+
+If `frontend-react/dist` does not exist, FastAPI now returns a clear error telling you to build the frontend first. There is no legacy static frontend fallback anymore.
 
 ### Docker Deployment
 
@@ -215,7 +218,6 @@ paper_online/
 │   ├── src/            # React frontend source code
 │   ├── dist/           # Built frontend assets
 │   └── vite.config.ts  # Vite config
-├── frontend/           # Legacy static frontend fallback
 ├── scripts/
 │   ├── import_papers.py  # Batch import papers
 │   └── migrate_db.sql    # Database migration
@@ -231,6 +233,7 @@ If you have JSONL data files of conference papers, you can batch import them usi
 ```bash
 python scripts/import_papers.py --conference neurips_2025
 python scripts/import_papers.py --conference iclr_2026
+python scripts/import_papers.py --conference icml_2025
 ```
 
 Data files should be placed in the `crawled_data/{conference}/` directory.

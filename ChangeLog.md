@@ -1,5 +1,12 @@
 # ChangeLog History
 
+## 2026-03-18
+
+- 🧹 移除旧 `frontend/` 静态前端依赖，FastAPI 不再回退托管旧版 HTML/CSS/JS。
+- 🚦 收紧前端入口策略：仅保留 React SPA 路由，旧参数式 URL 不再自动兼容跳转。
+- ⚠️ 明确未构建前端时的行为：若 `frontend-react/dist` 缺失，后端会返回清晰错误并提示先执行前端构建。
+- 📚 同步更新中英文 README 与 AGENTS，移除“legacy frontend fallback”相关说明。
+
 ## 2026-03-16
 
 - ⚛️ 新建 `frontend-react`，基于 React 重写前端并接入现有 FastAPI 后端，覆盖首页、会议页、全局搜索、论文详情、AI 分析流式输出、论文聊天、历史会话与在线人数。
@@ -18,4 +25,3 @@
 - 🧱 优化写入性能：`save_paper()` 改为批量写入 authors 和 keywords，减少 Supabase 往返请求。
 - 📦 优化导入脚本：`scripts/import_papers.py` 改为按批次批量删除并写入 authors 和 keywords，提升批量导入效率。
 - 🛡️ 修复超长论文上下文问题：在发送给 LLM 前使用 `tiktoken` 按 token 截断正文，避免超出模型上下文上限。
-

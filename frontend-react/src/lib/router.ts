@@ -71,32 +71,3 @@ export function buildQueryString(params: URLSearchParams): string {
   const query = params.toString();
   return query ? `?${query}` : '';
 }
-
-export function getLegacyRedirect(pathname: string, search: string): string | null {
-  if (pathname !== '/') {
-    return null;
-  }
-
-  const params = new URLSearchParams(search);
-  const paperId = params.get('id');
-  if (paperId) {
-    return `/papers/${paperId}`;
-  }
-
-  const conference = params.get('conference');
-  if (conference) {
-    return `/conference/${conference}`;
-  }
-
-  const keyword = params.get('search');
-  if (keyword) {
-    const next = new URLSearchParams();
-    next.set('q', keyword);
-    next.set('title', params.get('title') ?? 'true');
-    next.set('abstract', params.get('abstract') ?? 'true');
-    next.set('keywords', params.get('keywords') ?? 'true');
-    return `/search${buildQueryString(next)}`;
-  }
-
-  return null;
-}
