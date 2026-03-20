@@ -109,7 +109,7 @@ class OpenRouterLLM(BaseLLM):
 class StepLLM(BaseLLM):
     def __init__(self, api_key: str = None, base_url: str = None, model: str = "step-3.5-flash"):
         self.api_key = api_key if api_key else os.getenv("STEP_API_KEY")
-        self.base_url = base_url if base_url else os.getenv("STEP_BASE_URL")
+        self.base_url = base_url if base_url else "https://api.stepfun.com/v1"
         self.model = model
         self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
 
@@ -125,7 +125,7 @@ if __name__ == "__main__":
 
     async def test():
         try:
-            llm = ArkPlanLLM()
+            llm = StepLLM()
             print(f"API Key configured: {bool(llm.api_key)}")
             print(f"Base URL: {llm.base_url}")
             print(f"Model: {llm.model}")

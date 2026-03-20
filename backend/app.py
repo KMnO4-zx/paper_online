@@ -13,7 +13,7 @@ from sse_starlette.sse import EventSourceResponse
 
 from pydantic import BaseModel
 
-from llm import SiliconflowLLM, OpenRouterLLM
+from llm import SiliconflowLLM, OpenRouterLLM, StepLLM, ArkPlanLLM
 from utils import reader, get_openreview_info, ReaderError, OpenReviewError, truncate_content_for_llm
 from database import get_paper, save_paper, update_llm_response, get_chat_sessions, create_chat_session, get_chat_messages, save_chat_message, delete_chat_session, delete_last_chat_message_pair, get_conference_papers, search_all_papers, DatabaseError
 from chat import ChatSession
@@ -22,9 +22,9 @@ from markdown_utils import normalize_llm_markdown
 
 logger = logging.getLogger(__name__)
 
-llm = OpenRouterLLM()
+llm = StepLLM()
 chat_sessions: dict[str, ChatSession] = {}
-background_analyzer = BackgroundAnalyzer(llm, check_interval=600)
+background_analyzer = BackgroundAnalyzer(llm, check_interval=1800)
 background_task = None
 
 @asynccontextmanager
