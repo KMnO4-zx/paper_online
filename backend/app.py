@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 
 llm = StepLLM()
 chat_sessions: dict[str, ChatSession] = {}
-background_analyzer = BackgroundAnalyzer(llm, check_interval=1800)
+background_analyzer = BackgroundAnalyzer(llm, check_interval=1200)
 background_task = None
 
 @asynccontextmanager
