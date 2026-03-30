@@ -107,7 +107,7 @@ class OpenRouterLLM(BaseLLM):
             yield chunk
 
 class StepLLM(BaseLLM):
-    def __init__(self, api_key: str = None, base_url: str = None, model: str = "step-3.5-flash"):
+    def __init__(self, api_key: str = None, base_url: str = None, model: str = "step-3.5-flash-2603"):
         self.api_key = api_key if api_key else os.getenv("STEP_API_KEY")
         self.base_url = base_url if base_url else "https://api.stepfun.com/v1"
         self.model = model
