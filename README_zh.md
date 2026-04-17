@@ -232,7 +232,27 @@ uv run python scripts/import_papers.py --conference icml_2025
 - 对应论文的 `authors` / `keywords` 会先删后插
 - `llm_response` 不会在导入阶段生成，后续由用户访问或后台分析补全
 
-### 4. 推荐的本地开发顺序
+### 4. 论文正文磁盘缓存
+
+Jina Reader 解析出来的论文正文**不会写入 PostgreSQL**，而是缓存到：
+
+```text
+data/paper_cache/
+```
+
+当前行为：
+
+- 第一次分析论文时，如果缓存不存在，会调用 Jina Reader 并写入缓存
+- 第一次初始化 chat 上下文时，如果缓存不存在，也会调用 Jina Reader
+- 命中缓存后，analysis / chat / 后台分析都会直接复用本地文本
+
+如果你想强制重新抓取正文，直接删除：
+
+```bash
+rm -rf data/paper_cache
+```
+
+### 5. 推荐的本地开发顺序
 
 如果你是新贡献者，最省心的顺序是：
 

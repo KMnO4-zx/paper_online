@@ -228,7 +228,27 @@ Notes:
 - `authors` and `keywords` are deleted then re-inserted for touched papers
 - `llm_response` is not generated during import; it is filled later by user-triggered analysis or the background analyzer
 
-### 4. Recommended local dev flow
+### 4. Paper content disk cache
+
+The paper body returned by Jina Reader is **not stored in PostgreSQL**. It is cached on disk under:
+
+```text
+data/paper_cache/
+```
+
+Current behavior:
+
+- The first paper analysis fetches the PDF text from Jina Reader if the cache is missing
+- The first chat-session initialization also fetches it if the cache is missing
+- Once cached, analysis / chat / background analysis reuse the local text file
+
+To force a fresh fetch, delete the cache directory:
+
+```bash
+rm -rf data/paper_cache
+```
+
+### 5. Recommended local dev flow
 
 For a new contributor, this is the shortest path:
 

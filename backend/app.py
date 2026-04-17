@@ -14,7 +14,7 @@ from sse_starlette.sse import EventSourceResponse
 from pydantic import BaseModel
 
 from llm import SiliconflowLLM, OpenRouterLLM, StepLLM, ArkPlanLLM
-from utils import reader, get_openreview_info, ReaderError, OpenReviewError, truncate_content_for_llm
+from utils import get_or_cache_paper_content, get_openreview_info, ReaderError, OpenReviewError, truncate_content_for_llm
 from database import get_paper, save_paper, update_llm_response, get_chat_sessions, create_chat_session, get_chat_messages, save_chat_message, delete_chat_session, delete_last_chat_message_pair, get_conference_papers, search_all_papers, DatabaseError
 from chat import ChatSession
 from background_tasks import BackgroundAnalyzer
@@ -140,7 +140,11 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
         # Perform AI analysis
         yield {"event": "status", "data": "正在读取 PDF 内容..."}
         try:
-            paper_content = await asyncio.to_thread(reader, paper_info["pdf"])
+            paper_content = await asyncio.to_thread(
+                get_or_cache_paper_content,
+                paper_id,
+                paper_info["pdf"],
+            )
             paper_content = truncate_content_for_llm(paper_content)
         except ReaderError as e:
             yield {"event": "error", "data": str(e)}
@@ -177,7 +181,11 @@ async def chat_with_paper(paper_id: str, req: ChatRequest):
 
         context_parts = []
         if paper_info.get("pdf"):
-            paper_content = await asyncio.to_thread(reader, paper_info["pdf"])
+            paper_content = await asyncio.to_thread(
+                get_or_cache_paper_content,
+                paper_id,
+                paper_info["pdf"],
+            )
             paper_content = truncate_content_for_llm(paper_content)
             context_parts.append(f"论文全文：\n{paper_content}")
         if paper_info.get("llm_response"):
@@ -265,7 +273,11 @@ async def regenerate_chat(paper_id: str, req: ChatRequest):
 
         context_parts = []
         if paper_info.get("pdf"):
-            paper_content = await asyncio.to_thread(reader, paper_info["pdf"])
+            paper_content = await asyncio.to_thread(
+                get_or_cache_paper_content,
+                paper_id,
+                paper_info["pdf"],
+            )
             paper_content = truncate_content_for_llm(paper_content)
             context_parts.append(f"论文全文：\n{paper_content}")
         if paper_info.get("llm_response"):

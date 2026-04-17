@@ -1,7 +1,12 @@
+import json
+import os
 import requests
-import time
 import logging
+import re
 import tiktoken
+import time
+from datetime import datetime, timezone
+from pathlib import Path
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -18,6 +23,8 @@ HEADERS = {
     "Origin": "https://openreview.net"
 }
 
+DEFAULT_PAPER_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "paper_cache"
+
 
 class ReaderError(Exception):
     """Jina Reader 请求失败"""
@@ -27,6 +34,107 @@ class ReaderError(Exception):
 class OpenReviewError(Exception):
     """OpenReview API 请求失败"""
     pass
+
+
+def _get_paper_cache_dir() -> Path:
+    return Path(os.getenv("PAPER_CONTENT_CACHE_DIR", str(DEFAULT_PAPER_CACHE_DIR)))
+
+
+def _get_paper_cache_paths(paper_id: str) -> tuple[Path, Path]:
+    safe_paper_id = re.sub(r"[^A-Za-z0-9._-]", "_", paper_id)
+    cache_dir = _get_paper_cache_dir()
+    return (
+        cache_dir / f"{safe_paper_id}.txt",
+        cache_dir / f"{safe_paper_id}.meta.json",
+    )
+
+
+def has_cached_paper_content(paper_id: str, pdf_url: str | None = None) -> bool:
+    content_path, meta_path = _get_paper_cache_paths(paper_id)
+    if not content_path.exists():
+        return False
+
+    try:
+        if content_path.stat().st_size <= 0:
+            return False
+    except OSError:
+        return False
+
+    if pdf_url and meta_path.exists():
+        try:
+            metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            logger.warning("论文正文缓存元数据损坏，忽略缓存: %s", meta_path)
+            return False
+
+        cached_pdf_url = metadata.get("pdf_url")
+        if cached_pdf_url and cached_pdf_url != pdf_url:
+            logger.info("论文 %s 的 PDF 地址已变化，重新抓取正文缓存", paper_id)
+            return False
+
+    return True
+
+
+def get_cached_paper_content(paper_id: str, pdf_url: str | None = None) -> str | None:
+    content_path, _ = _get_paper_cache_paths(paper_id)
+    if not has_cached_paper_content(paper_id, pdf_url):
+        logger.info("论文正文缓存未命中: %s", paper_id)
+        return None
+
+    try:
+        content = content_path.read_text(encoding="utf-8")
+    except OSError as exc:
+        logger.warning("读取论文正文缓存失败 %s: %s", content_path, exc)
+        return None
+
+    if not content.strip():
+        logger.warning("论文正文缓存为空，忽略缓存: %s", content_path)
+        return None
+
+    logger.info("论文正文缓存命中: %s", paper_id)
+    return content
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    tmp_path.write_text(content, encoding="utf-8")
+    tmp_path.replace(path)
+
+
+def cache_paper_content(paper_id: str, pdf_url: str, content: str) -> None:
+    if not content.strip():
+        logger.warning("论文正文为空，跳过缓存: %s", paper_id)
+        return
+
+    content_path, meta_path = _get_paper_cache_paths(paper_id)
+    metadata = {
+        "paper_id": paper_id,
+        "pdf_url": pdf_url,
+        "source": "jina_reader",
+        "cached_at": datetime.now(timezone.utc).isoformat(),
+        "size_bytes": len(content.encode("utf-8")),
+    }
+
+    try:
+        _atomic_write_text(content_path, content)
+        _atomic_write_text(
+            meta_path,
+            json.dumps(metadata, ensure_ascii=False, indent=2),
+        )
+        logger.info("已缓存论文正文: %s -> %s", paper_id, content_path)
+    except OSError as exc:
+        logger.warning("写入论文正文缓存失败 %s: %s", content_path, exc)
+
+
+def get_or_cache_paper_content(paper_id: str, pdf_url: str) -> str:
+    cached_content = get_cached_paper_content(paper_id, pdf_url)
+    if cached_content is not None:
+        return cached_content
+
+    content = reader(pdf_url)
+    cache_paper_content(paper_id, pdf_url, content)
+    return content
 
 
 def truncate_content_for_llm(text: str, max_tokens: int = LLM_CONTENT_TOKEN_LIMIT) -> str:

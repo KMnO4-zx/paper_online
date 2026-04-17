@@ -224,6 +224,7 @@ frontend-react/dist/
 
 # crawler output data
 data/
+data/paper_cache/
 *.jsonl
 crawled_data/
 
