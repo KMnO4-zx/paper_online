@@ -310,7 +310,7 @@ For VPS deployment, prefer `docker compose`:
 
 ```bash
 cp .env.example .env
-# Fill in POSTGRES_PASSWORD, OPEN_ROUTER_API_KEY, and any optional LLM keys.
+# POSTGRES_PASSWORD is required. Fill it in together with OPEN_ROUTER_API_KEY and any optional LLM keys.
 docker compose up --build -d
 ```
 
@@ -321,6 +321,7 @@ docker build -t paper-insight .
 ```
 
 At runtime, the app expects a valid `DATABASE_URL`. On VPS, the included `docker-compose.yml` wires the app to a PostgreSQL 16 container automatically.
+The Compose setup also persists `/app/data`, so `data/paper_cache/` survives container recreation.
 
 ## Project Structure
 

@@ -1,5 +1,16 @@
 # ChangeLog History
 
+## 2026-04-17
+
+- 🐘 完成数据库解耦：移除运行时对 Supabase SDK 的依赖，后端改为基于 `psycopg` 直连 PostgreSQL，自托管 PostgreSQL 16 成为新的主路径。
+- 🧱 新增完整数据库初始化能力：补齐 `db/migrations/`、`scripts/apply_migrations.py`、`db/seeds/dev_seed.sql`、单文件 `scripts/migrate_db.sql`，支持空库初始化、开发 seed 和结构化迁移。
+- 🐳 增加单机 VPS 部署基础设施：引入 `docker-compose.yml`、`.env.example`、`backend/.env.example`，并让应用容器启动前自动执行 migration。
+- 📦 调整数据导入流程：`scripts/import_papers.py` 改为直连 PostgreSQL，继续支持从 `crawled_data/{conference}` 批量导入 ICLR 2026、NeurIPS 2025、ICML 2025。
+- 🗃️ 新增论文正文磁盘缓存：Jina Reader 返回的正文不再重复远程抓取，而是按 `paper_id` 缓存到 `data/paper_cache/`，analysis / chat / 后台分析统一复用本地缓存。
+- 🔐 收紧 Docker 部署默认值：`POSTGRES_PASSWORD` 改为必须显式提供，不再允许 `change-me` 弱默认值；同时为 `/app/data` 增加命名 volume，持久化 `paper_cache`。
+- 🧭 增加论文详情页外链能力：在论文详情页新增 `Open in KIMI` 按钮，自动携带面向论文讲解的预填 prompt、PDF 链接以及 `send_immediately=true`。
+- 📚 更新中英文 README 与开发说明：补充本地 PostgreSQL 启停、开发者指南、缓存目录说明、自托管部署路径，并移除普通开发者不需要的 Supabase 导出主流程。
+
 ## 2026-03-18
 
 - 🧹 移除旧 `frontend/` 静态前端依赖，FastAPI 不再回退托管旧版 HTML/CSS/JS。

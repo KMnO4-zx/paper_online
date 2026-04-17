@@ -318,7 +318,7 @@ http://127.0.0.1:8000
 
 ```bash
 cp .env.example .env
-# 按需修改 POSTGRES_PASSWORD、OPEN_ROUTER_API_KEY 等变量
+# 必须填写 POSTGRES_PASSWORD，并按需填写 OPEN_ROUTER_API_KEY 等变量
 docker compose up --build -d
 ```
 
@@ -329,6 +329,7 @@ docker build -t paper-insight .
 ```
 
 容器运行时需要可用的 `DATABASE_URL`，在 VPS 上推荐直接通过 `docker-compose.yml` 统一注入。
+当前 Compose 还会把 `/app/data` 挂到命名 volume，用来持久化 `data/paper_cache/` 里的论文正文缓存。
 
 ## 项目结构
 
