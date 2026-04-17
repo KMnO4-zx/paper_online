@@ -1,0 +1,39 @@
+services:
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-paper_online}
+      POSTGRES_USER: ${POSTGRES_USER:-paper}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-paper} -d ${POSTGRES_DB:-paper_online}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build:
+      context: .
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      PORT: ${PORT:-8000}
+      DATABASE_URL: postgresql://${POSTGRES_USER:-paper}:${POSTGRES_PASSWORD:-change-me}@postgres:5432/${POSTGRES_DB:-paper_online}
+      OPEN_ROUTER_API_KEY: ${OPEN_ROUTER_API_KEY:-}
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      STEP_API_KEY: ${STEP_API_KEY:-}
+      STEP_BASE_URL: ${STEP_BASE_URL:-}
+      ARKPLAN_API_KEY: ${ARKPLAN_API_KEY:-}
+    ports:
+      - "${PORT:-8000}:8000"
+
+volumes:
+  postgres_data:

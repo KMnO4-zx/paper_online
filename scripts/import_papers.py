@@ -3,27 +3,26 @@ import json
 import os
 import sys
 from pathlib import Path
+
+import psycopg
 from dotenv import load_dotenv
+from psycopg.types.json import Jsonb
 
-# Load environment variables from backend/.env
-env_path = Path(__file__).parent.parent / "backend" / ".env"
-load_dotenv(env_path)
+# Load environment variables from backend/.env first, then project root .env.
+repo_root = Path(__file__).parent.parent
+load_dotenv(repo_root / "backend" / ".env")
+load_dotenv(repo_root / ".env")
 
-from supabase import create_client
-
-SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-SUPABASE_KEY = os.getenv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY")
-
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("Error: Supabase credentials not found in environment variables")
-    sys.exit(1)
-
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+DATABASE_URL = os.getenv("DATABASE_URL")
 
 
 def import_conference(conference_name: str):
     """Import papers from a conference directory."""
-    data_dir = Path(__file__).parent.parent / "crawled_data" / conference_name
+    if not DATABASE_URL:
+        print("Error: DATABASE_URL not found in environment variables")
+        sys.exit(1)
+
+    data_dir = repo_root / "crawled_data" / conference_name
 
     if not data_dir.exists():
         print(f"Error: Directory {data_dir} does not exist")
@@ -35,44 +34,24 @@ def import_conference(conference_name: str):
         return
 
     total_papers = 0
-    BATCH_SIZE = 100
+    batch_size = 100
 
     for jsonl_file in jsonl_files:
         print(f"\nProcessing {jsonl_file.name}...")
 
-        papers_batch = []
-        authors_batch = []
-        keywords_batch = []
+        papers_batch: list[tuple] = []
+        authors_batch: list[tuple] = []
+        keywords_batch: list[tuple] = []
 
-        with open(jsonl_file, 'r', encoding='utf-8') as f:
-            for line_num, line in enumerate(f, 1):
+        with open(jsonl_file, "r", encoding="utf-8") as file:
+            for line_num, line in enumerate(file, 1):
                 try:
-                    paper = json.loads(line)
-                    paper_id = paper["id"]
-                    content = paper["content"]
+                    paper_row, author_rows, keyword_rows = _parse_line(line)
+                    papers_batch.append(paper_row)
+                    authors_batch.extend(author_rows)
+                    keywords_batch.extend(keyword_rows)
 
-                    papers_batch.append({
-                        "id": paper_id,
-                        "title": content["title"]["value"],
-                        "abstract": content["abstract"]["value"],
-                        "venue": content["venue"]["value"],
-                        "primary_area": content["primary_area"]["value"]
-                    })
-
-                    for i, author in enumerate(content["authors"]["value"]):
-                        authors_batch.append({
-                            "paper_id": paper_id,
-                            "author_name": author,
-                            "author_order": i
-                        })
-
-                    for keyword in content["keywords"]["value"]:
-                        keywords_batch.append({
-                            "paper_id": paper_id,
-                            "keyword": keyword
-                        })
-
-                    if len(papers_batch) >= BATCH_SIZE:
+                    if len(papers_batch) >= batch_size:
                         _insert_batch(papers_batch, authors_batch, keywords_batch)
                         total_papers += len(papers_batch)
                         print(f"  Imported {total_papers} papers...")
@@ -80,8 +59,8 @@ def import_conference(conference_name: str):
                         authors_batch = []
                         keywords_batch = []
 
-                except Exception as e:
-                    print(f"  Error on line {line_num}: {e}")
+                except Exception as exc:
+                    print(f"  Error on line {line_num}: {exc}")
                     continue
 
         if papers_batch:
@@ -91,26 +70,91 @@ def import_conference(conference_name: str):
     print(f"\n✓ Successfully imported {total_papers} papers from {conference_name}")
 
 
-def _insert_batch(papers, authors, keywords):
-    """Insert a batch of papers, authors, and keywords."""
-    if papers:
-        supabase.table("papers").upsert(papers).execute()
-    if authors:
-        paper_ids = list(set(a["paper_id"] for a in authors))
-        supabase.table("authors").delete().in_("paper_id", paper_ids).execute()
-        supabase.table("authors").insert(authors).execute()
-    if keywords:
-        paper_ids = list(set(k["paper_id"] for k in keywords))
-        supabase.table("keywords").delete().in_("paper_id", paper_ids).execute()
-        supabase.table("keywords").insert(keywords).execute()
+def _parse_line(line: str) -> tuple[tuple, list[tuple], list[tuple]]:
+    paper = json.loads(line)
+    paper_id = paper["id"]
+    content = paper["content"]
+    keyword_values = content.get("keywords", {}).get("value", [])
+
+    paper_row = (
+        paper_id,
+        content["title"]["value"],
+        content["abstract"]["value"],
+        Jsonb(keyword_values),
+        content.get("pdf", {}).get("value"),
+        content["venue"]["value"],
+        content["primary_area"]["value"],
+    )
+
+    author_rows = [
+        (paper_id, author, index)
+        for index, author in enumerate(content["authors"]["value"])
+    ]
+    keyword_rows = [
+        (paper_id, keyword)
+        for keyword in keyword_values
+    ]
+
+    return paper_row, author_rows, keyword_rows
+
+
+def _insert_batch(
+    papers: list[tuple],
+    authors: list[tuple],
+    keywords: list[tuple],
+):
+    """Insert a batch of papers, authors, and keywords in one transaction."""
+    paper_ids = [paper[0] for paper in papers]
+
+    with psycopg.connect(DATABASE_URL) as conn:
+        with conn.cursor() as cur:
+            cur.executemany(
+                """
+                INSERT INTO papers (id, title, abstract, keywords, pdf, venue, primary_area)
+                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                ON CONFLICT (id) DO UPDATE SET
+                    title = EXCLUDED.title,
+                    abstract = EXCLUDED.abstract,
+                    keywords = EXCLUDED.keywords,
+                    pdf = EXCLUDED.pdf,
+                    venue = EXCLUDED.venue,
+                    primary_area = EXCLUDED.primary_area
+                """,
+                papers,
+            )
+
+            cur.execute("DELETE FROM authors WHERE paper_id = ANY(%s)", (paper_ids,))
+            if authors:
+                cur.executemany(
+                    """
+                    INSERT INTO authors (paper_id, author_name, author_order)
+                    VALUES (%s, %s, %s)
+                    """,
+                    authors,
+                )
+
+            cur.execute("DELETE FROM keywords WHERE paper_id = ANY(%s)", (paper_ids,))
+            if keywords:
+                cur.executemany(
+                    """
+                    INSERT INTO keywords (paper_id, keyword)
+                    VALUES (%s, %s)
+                    """,
+                    keywords,
+                )
+
+        conn.commit()
 
 
 if __name__ == "__main__":
     import argparse
 
-    parser = argparse.ArgumentParser(description="Import papers from JSONL files to Supabase")
-    parser.add_argument("--conference", required=True, help="Conference name (e.g., neurips_2025, iclr_2026)")
+    parser = argparse.ArgumentParser(description="Import papers from JSONL files into PostgreSQL")
+    parser.add_argument(
+        "--conference",
+        required=True,
+        help="Conference name (e.g., neurips_2025, iclr_2026)",
+    )
 
     args = parser.parse_args()
-
     import_conference(args.conference)

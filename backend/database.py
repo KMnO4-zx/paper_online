@@ -1,14 +1,18 @@
 import logging
 import os
 import time
-from typing import Callable, TypeVar
+from contextlib import contextmanager
+from typing import Callable, Iterator, TypeVar
 
-from supabase import create_client
+import psycopg
+from dotenv import find_dotenv, load_dotenv
+from psycopg.rows import dict_row
+from psycopg.types.json import Jsonb
 
-SUPABASE_URL = os.getenv("NEXT_PUBLIC_SUPABASE_URL")
-SUPABASE_KEY = os.getenv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY")
+load_dotenv(find_dotenv())
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY) if SUPABASE_URL and SUPABASE_KEY else None
+DATABASE_URL = os.getenv("DATABASE_URL")
+
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
 
@@ -20,10 +24,14 @@ _CACHE_TTL_SECONDS = 86400
 
 class DatabaseError(Exception):
     """Raised when database access fails after retries."""
-    pass
 
 
-def _run_with_retry(operation: Callable[[], T], context: str, retries: int = 3, delay: float = 1.0) -> T:
+def _run_with_retry(
+    operation: Callable[[], T],
+    context: str,
+    retries: int = 3,
+    delay: float = 1.0,
+) -> T:
     last_error: Exception | None = None
 
     for attempt in range(retries):
@@ -44,194 +52,292 @@ def _run_with_retry(operation: Callable[[], T], context: str, retries: int = 3, 
     raise DatabaseError(f"Database operation failed for {context}") from last_error
 
 
+@contextmanager
+def _get_connection() -> Iterator[psycopg.Connection]:
+    if not DATABASE_URL:
+        raise DatabaseError("DATABASE_URL is not configured")
+
+    conn = psycopg.connect(DATABASE_URL, row_factory=dict_row)
+    try:
+        yield conn
+    finally:
+        conn.close()
+
+
+def _fetch_keywords_for_papers(conn: psycopg.Connection, paper_ids: list[str]) -> dict[str, list[str]]:
+    if not paper_ids:
+        return {}
+
+    with conn.cursor() as cur:
+        cur.execute(
+            """
+            SELECT paper_id, keyword
+            FROM keywords
+            WHERE paper_id = ANY(%s)
+            ORDER BY id
+            """,
+            (paper_ids,),
+        )
+        rows = cur.fetchall()
+
+    keywords_by_paper: dict[str, list[str]] = {}
+    for row in rows:
+        keywords_by_paper.setdefault(row["paper_id"], []).append(row["keyword"])
+    return keywords_by_paper
+
+
 def get_paper(paper_id: str) -> dict | None:
-    if not supabase:
+    if not DATABASE_URL:
         return None
 
-    result = _run_with_retry(
-        lambda: supabase.table("papers").select("*").eq("id", paper_id).execute(),
-        f"get_paper:{paper_id}:paper",
-    )
+    def operation() -> dict | None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM papers WHERE id = %s", (paper_id,))
+                paper = cur.fetchone()
+                if not paper:
+                    return None
 
-    if not result.data:
-        return None
+                cur.execute(
+                    """
+                    SELECT author_name
+                    FROM authors
+                    WHERE paper_id = %s
+                    ORDER BY author_order
+                    """,
+                    (paper_id,),
+                )
+                paper["authors"] = [row["author_name"] for row in cur.fetchall()]
 
-    paper = result.data[0]
+                cur.execute(
+                    """
+                    SELECT keyword
+                    FROM keywords
+                    WHERE paper_id = %s
+                    ORDER BY id
+                    """,
+                    (paper_id,),
+                )
+                paper["keywords"] = [row["keyword"] for row in cur.fetchall()]
+                paper["pdf"] = paper.get("pdf") or f"https://openreview.net/pdf?id={paper_id}"
+                return paper
 
-    # Fetch authors
-    authors_result = _run_with_retry(
-        lambda: (
-            supabase.table("authors")
-            .select("author_name")
-            .eq("paper_id", paper_id)
-            .order("author_order")
-            .execute()
-        ),
-        f"get_paper:{paper_id}:authors",
-    )
-    paper["authors"] = [a["author_name"] for a in (authors_result.data or [])]
-
-    # Fetch keywords
-    keywords_result = _run_with_retry(
-        lambda: supabase.table("keywords").select("keyword").eq("paper_id", paper_id).execute(),
-        f"get_paper:{paper_id}:keywords",
-    )
-    paper["keywords"] = [k["keyword"] for k in (keywords_result.data or [])]
-
-    # Construct PDF URL
-    paper["pdf"] = f"https://openreview.net/pdf?id={paper_id}"
-
-    return paper
+    return _run_with_retry(operation, f"get_paper:{paper_id}")
 
 
 def save_paper(paper_info: dict, llm_response: str = None):
-    if not supabase:
+    if not DATABASE_URL:
         return
 
-    data = {
-        "id": paper_info["id"],
-        "title": paper_info.get("title"),
-        "abstract": paper_info.get("abstract"),
-        "venue": paper_info.get("venue"),
-        "primary_area": paper_info.get("primary_area"),
-        "llm_response": llm_response,
-    }
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO papers (
+                        id,
+                        title,
+                        abstract,
+                        keywords,
+                        pdf,
+                        venue,
+                        primary_area,
+                        llm_response
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        title = EXCLUDED.title,
+                        abstract = EXCLUDED.abstract,
+                        keywords = EXCLUDED.keywords,
+                        pdf = EXCLUDED.pdf,
+                        venue = EXCLUDED.venue,
+                        primary_area = EXCLUDED.primary_area,
+                        llm_response = EXCLUDED.llm_response
+                    """,
+                    (
+                        paper_info["id"],
+                        paper_info.get("title"),
+                        paper_info.get("abstract"),
+                        Jsonb(paper_info.get("keywords", [])),
+                        paper_info.get("pdf"),
+                        paper_info.get("venue"),
+                        paper_info.get("primary_area"),
+                        llm_response,
+                    ),
+                )
 
-    _run_with_retry(
-        lambda: supabase.table("papers").upsert(data).execute(),
-        f"save_paper:{paper_info['id']}:paper",
-    )
+                cur.execute("DELETE FROM authors WHERE paper_id = %s", (paper_info["id"],))
+                authors = paper_info.get("authors", [])
+                if authors:
+                    cur.executemany(
+                        """
+                        INSERT INTO authors (paper_id, author_name, author_order)
+                        VALUES (%s, %s, %s)
+                        """,
+                        [
+                            (paper_info["id"], author, index)
+                            for index, author in enumerate(authors)
+                        ],
+                    )
 
-    # Save authors
-    authors = paper_info.get("authors", [])
-    if authors:
-        _run_with_retry(
-            lambda: supabase.table("authors").delete().eq("paper_id", paper_info["id"]).execute(),
-            f"save_paper:{paper_info['id']}:delete_authors",
-        )
-        author_rows = [
-            {"paper_id": paper_info["id"], "author_name": author, "author_order": i}
-            for i, author in enumerate(authors)
-        ]
-        _run_with_retry(
-            lambda: supabase.table("authors").insert(author_rows).execute(),
-            f"save_paper:{paper_info['id']}:insert_authors",
-        )
+                cur.execute("DELETE FROM keywords WHERE paper_id = %s", (paper_info["id"],))
+                keywords = paper_info.get("keywords", [])
+                if keywords:
+                    cur.executemany(
+                        """
+                        INSERT INTO keywords (paper_id, keyword)
+                        VALUES (%s, %s)
+                        """,
+                        [(paper_info["id"], keyword) for keyword in keywords],
+                    )
 
-    # Save keywords
-    keywords = paper_info.get("keywords", [])
-    if keywords:
-        _run_with_retry(
-            lambda: supabase.table("keywords").delete().eq("paper_id", paper_info["id"]).execute(),
-            f"save_paper:{paper_info['id']}:delete_keywords",
-        )
-        keyword_rows = [
-            {"paper_id": paper_info["id"], "keyword": keyword} for keyword in keywords
-        ]
-        _run_with_retry(
-            lambda: supabase.table("keywords").insert(keyword_rows).execute(),
-            f"save_paper:{paper_info['id']}:insert_keywords",
-        )
+            conn.commit()
+
+    _run_with_retry(operation, f"save_paper:{paper_info['id']}")
 
 
 def update_llm_response(paper_id: str, response: str):
-    if not supabase:
+    if not DATABASE_URL:
         return
 
-    _run_with_retry(
-        lambda: supabase.table("papers").update({"llm_response": response}).eq("id", paper_id).execute(),
-        f"update_llm_response:{paper_id}",
-    )
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE papers
+                    SET llm_response = %s
+                    WHERE id = %s
+                    """,
+                    (response, paper_id),
+                )
+            conn.commit()
+
+    _run_with_retry(operation, f"update_llm_response:{paper_id}")
 
 
 def get_chat_sessions(user_id: str, paper_id: str) -> list:
-    if not supabase:
+    if not DATABASE_URL:
         return []
-    result = _run_with_retry(
-        lambda: (
-            supabase.table("chat_sessions")
-            .select("*")
-            .eq("user_id", user_id)
-            .eq("paper_id", paper_id)
-            .order("created_at", desc=True)
-            .execute()
-        ),
-        f"get_chat_sessions:{user_id}:{paper_id}",
-    )
-    return result.data or []
+
+    def operation() -> list:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM chat_sessions
+                    WHERE user_id = %s AND paper_id = %s
+                    ORDER BY created_at DESC
+                    """,
+                    (user_id, paper_id),
+                )
+                return cur.fetchall()
+
+    return _run_with_retry(operation, f"get_chat_sessions:{user_id}:{paper_id}")
 
 
 def create_chat_session(session_id: str, user_id: str, paper_id: str, title: str):
-    if not supabase:
+    if not DATABASE_URL:
         return
-    _run_with_retry(
-        lambda: supabase.table("chat_sessions").insert(
-            {"id": session_id, "user_id": user_id, "paper_id": paper_id, "title": title}
-        ).execute(),
-        f"create_chat_session:{session_id}",
-    )
+
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO chat_sessions (id, user_id, paper_id, title)
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (id) DO NOTHING
+                    """,
+                    (session_id, user_id, paper_id, title),
+                )
+            conn.commit()
+
+    _run_with_retry(operation, f"create_chat_session:{session_id}")
 
 
 def get_chat_messages(session_id: str) -> list:
-    if not supabase:
+    if not DATABASE_URL:
         return []
-    result = _run_with_retry(
-        lambda: (
-            supabase.table("chat_messages")
-            .select("role, content, created_at")
-            .eq("session_id", session_id)
-            .order("created_at")
-            .execute()
-        ),
-        f"get_chat_messages:{session_id}",
-    )
-    return result.data or []
+
+    def operation() -> list:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT role, content, created_at
+                    FROM chat_messages
+                    WHERE session_id = %s
+                    ORDER BY created_at
+                    """,
+                    (session_id,),
+                )
+                return cur.fetchall()
+
+    return _run_with_retry(operation, f"get_chat_messages:{session_id}")
 
 
 def save_chat_message(session_id: str, role: str, content: str):
-    if not supabase:
+    if not DATABASE_URL:
         return
-    _run_with_retry(
-        lambda: supabase.table("chat_messages").insert(
-            {"session_id": session_id, "role": role, "content": content}
-        ).execute(),
-        f"save_chat_message:{session_id}:{role}",
-    )
+
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO chat_messages (session_id, role, content)
+                    VALUES (%s, %s, %s)
+                    """,
+                    (session_id, role, content),
+                )
+            conn.commit()
+
+    _run_with_retry(operation, f"save_chat_message:{session_id}:{role}")
 
 
 def delete_chat_session(session_id: str):
-    if not supabase:
+    if not DATABASE_URL:
         return
-    _run_with_retry(
-        lambda: supabase.table("chat_messages").delete().eq("session_id", session_id).execute(),
-        f"delete_chat_session:{session_id}:messages",
-    )
-    _run_with_retry(
-        lambda: supabase.table("chat_sessions").delete().eq("id", session_id).execute(),
-        f"delete_chat_session:{session_id}:session",
-    )
+
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM chat_messages WHERE session_id = %s", (session_id,))
+                cur.execute("DELETE FROM chat_sessions WHERE id = %s", (session_id,))
+            conn.commit()
+
+    _run_with_retry(operation, f"delete_chat_session:{session_id}")
 
 
 def delete_last_chat_message_pair(session_id: str):
     """Delete the last user+assistant message pair from a session."""
-    if not supabase:
+    if not DATABASE_URL:
         return
-    rows = _run_with_retry(
-        lambda: (
-            supabase.table("chat_messages")
-            .select("id")
-            .eq("session_id", session_id)
-            .order("created_at", desc=True)
-            .limit(2)
-            .execute()
-        ),
-        f"delete_last_chat_message_pair:{session_id}:fetch",
-    )
-    for r in (rows.data or []):
-        _run_with_retry(
-            lambda r=r: supabase.table("chat_messages").delete().eq("id", r["id"]).execute(),
-            f"delete_last_chat_message_pair:{session_id}:delete:{r['id']}",
-        )
+
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id
+                    FROM chat_messages
+                    WHERE session_id = %s
+                    ORDER BY created_at DESC
+                    LIMIT 2
+                    """,
+                    (session_id,),
+                )
+                rows = cur.fetchall()
+                if rows:
+                    cur.execute(
+                        "DELETE FROM chat_messages WHERE id = ANY(%s)",
+                        ([row["id"] for row in rows],),
+                    )
+            conn.commit()
+
+    _run_with_retry(operation, f"delete_last_chat_message_pair:{session_id}")
 
 
 def _build_cache_key(
@@ -268,63 +374,20 @@ def _load_keywords_for_papers(papers: list[dict]) -> tuple[list[dict], bool]:
     if not papers:
         return papers, True
 
-    paper_ids = [p["id"] for p in papers]
+    paper_ids = [paper["id"] for paper in papers]
 
-    for retry in range(3):
-        try:
-            keywords_result = (
-                supabase.table("keywords")
-                .select("paper_id, keyword")
-                .in_("paper_id", paper_ids)
-                .execute()
-            )
-            break
-        except Exception:
-            if retry == 2:
-                for paper in papers:
-                    paper["keywords"] = []
-                return papers, False
-            time.sleep(1)
-
-    keywords_by_paper = {}
-    for row in keywords_result.data or []:
-        keywords_by_paper.setdefault(row["paper_id"], []).append(row["keyword"])
+    try:
+        with _get_connection() as conn:
+            keywords_by_paper = _fetch_keywords_for_papers(conn, paper_ids)
+    except Exception:
+        for paper in papers:
+            paper["keywords"] = []
+        return papers, False
 
     for paper in papers:
         paper["keywords"] = keywords_by_paper.get(paper["id"], [])
 
     return papers, True
-
-
-def _extract_count_value(data) -> int:
-    if data is None:
-        raise ValueError("RPC count response is empty")
-
-    if isinstance(data, (int, float)):
-        return int(data)
-
-    if isinstance(data, str):
-        return int(data)
-
-    if isinstance(data, list):
-        if not data:
-            return 0
-        first = data[0]
-        if isinstance(first, (int, float)):
-            return int(first)
-        if isinstance(first, dict):
-            if "count_papers_optimized" in first:
-                return int(first["count_papers_optimized"])
-            if len(first) == 1:
-                return int(next(iter(first.values())))
-
-    if isinstance(data, dict):
-        if "count_papers_optimized" in data:
-            return int(data["count_papers_optimized"])
-        if len(data) == 1:
-            return int(next(iter(data.values())))
-
-    raise ValueError(f"Unsupported RPC count response shape: {type(data)!r}")
 
 
 def _search_papers_via_rpc(
@@ -336,32 +399,45 @@ def _search_papers_via_rpc(
     search_abstract: bool,
     search_keywords: bool,
 ) -> tuple[list[dict], int]:
-    params = {
-        "search_term": search,
-        "venue_prefix": venue_prefix,
-        "search_title": search_title,
-        "search_abstract": search_abstract,
-        "search_keywords": search_keywords,
-        "page_limit": limit,
-        "page_offset": offset,
-    }
+    def operation() -> tuple[list[dict], int]:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM search_papers_optimized(%s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        search,
+                        venue_prefix,
+                        search_title,
+                        search_abstract,
+                        search_keywords,
+                        limit,
+                        offset,
+                    ),
+                )
+                papers = cur.fetchall()
+                papers, _ = _load_keywords_for_papers(papers)
 
-    papers_result = supabase.rpc("search_papers_optimized", params).execute()
-    count_result = supabase.rpc(
-        "count_papers_optimized",
-        {
-            "search_term": search,
-            "venue_prefix": venue_prefix,
-            "search_title": search_title,
-            "search_abstract": search_abstract,
-            "search_keywords": search_keywords,
-        },
-    ).execute()
+                cur.execute(
+                    """
+                    SELECT count_papers_optimized(%s, %s, %s, %s, %s) AS total
+                    """,
+                    (
+                        search,
+                        venue_prefix,
+                        search_title,
+                        search_abstract,
+                        search_keywords,
+                    ),
+                )
+                row = cur.fetchone()
+                total = int(row["total"] or 0)
 
-    papers = papers_result.data or []
-    papers, _ = _load_keywords_for_papers(papers)
-    total = _extract_count_value(count_result.data)
-    return papers, total
+        return papers, total
+
+    return _run_with_retry(operation, "search_papers_via_rpc")
 
 
 def _paper_type_priority(paper: dict) -> int:
@@ -418,64 +494,46 @@ def _search_papers_legacy(
     search_abstract: bool,
     search_keywords: bool,
 ) -> tuple[list[dict], int]:
-    all_papers = []
-    batch_size = 1000
-    current_offset = 0
-    matched_keyword_paper_ids: set[str] = set()
     normalized_search = (search or "").casefold()
+    matched_keyword_paper_ids: set[str] = set()
 
-    while True:
-        for retry in range(3):
-            try:
-                query = supabase.table("papers").select("*")
-                if venue_prefix:
-                    query = query.ilike("venue", f"{venue_prefix}%")
+    with _get_connection() as conn:
+        with conn.cursor() as cur:
+            if search and search_keywords:
+                cur.execute(
+                    """
+                    SELECT DISTINCT paper_id
+                    FROM keywords
+                    WHERE keyword ILIKE %s
+                    """,
+                    (f"%{search}%",),
+                )
+                matched_keyword_paper_ids = {
+                    row["paper_id"] for row in cur.fetchall()
+                }
 
-                if search:
-                    conditions = []
+            query = "SELECT * FROM papers"
+            params: list[object] = []
+            if venue_prefix:
+                query += " WHERE venue ILIKE %s"
+                params.append(f"{venue_prefix}%")
+            cur.execute(query, params)
+            all_papers = cur.fetchall()
 
-                    if search_keywords:
-                        keywords_result = (
-                            supabase.table("keywords")
-                            .select("paper_id")
-                            .ilike("keyword", f"%{search}%")
-                            .execute()
-                        )
-                        matched_keyword_paper_ids = {
-                            k["paper_id"] for k in (keywords_result.data or [])
-                        }
-                        paper_ids_from_keywords = list(matched_keyword_paper_ids)
-                        if paper_ids_from_keywords:
-                            conditions.append(f"id.in.({','.join(paper_ids_from_keywords)})")
+    if search:
+        filtered_papers = []
+        for paper in all_papers:
+            title = (paper.get("title") or "").casefold()
+            abstract = (paper.get("abstract") or "").casefold()
+            paper_id = paper.get("id") or ""
 
-                    if search_title:
-                        conditions.append(f"title.ilike.%{search}%")
-
-                    if search_abstract:
-                        conditions.append(f"abstract.ilike.%{search}%")
-
-                    if not conditions:
-                        return [], 0
-
-                    if conditions:
-                        query = query.or_(",".join(conditions))
-
-                result = query.range(current_offset, current_offset + batch_size - 1).execute()
-                break
-            except Exception:
-                if retry == 2:
-                    raise
-                time.sleep(1)
-
-        if not result.data:
-            break
-
-        all_papers.extend(result.data)
-
-        if len(result.data) < batch_size:
-            break
-
-        current_offset += batch_size
+            if (
+                (search_title and normalized_search in title)
+                or (search_abstract and normalized_search in abstract)
+                or (paper_id in matched_keyword_paper_ids)
+            ):
+                filtered_papers.append(paper)
+        all_papers = filtered_papers
 
     if search:
         sorted_papers = sorted(
@@ -493,6 +551,7 @@ def _search_papers_legacy(
         )
     else:
         sorted_papers = sorted(all_papers, key=_stable_paper_sort_key)
+
     paginated_papers = sorted_papers[offset : offset + limit]
     paginated_papers, _ = _load_keywords_for_papers(paginated_papers)
     return paginated_papers, len(sorted_papers)
@@ -507,7 +566,7 @@ def _search_papers(
     search_abstract: bool,
     search_keywords: bool,
 ) -> tuple[list[dict], int]:
-    if not supabase:
+    if not DATABASE_URL:
         return [], 0
 
     if search and not (search_title or search_abstract or search_keywords):
@@ -592,17 +651,21 @@ def search_all_papers(
 
 def get_unanalyzed_papers(limit: int = 10) -> list:
     """获取未分析的论文（llm_response IS NULL）"""
-    if not supabase:
+    if not DATABASE_URL:
         return []
 
-    result = _run_with_retry(
-        lambda: (
-            supabase.table("papers")
-            .select("id, title, venue")
-            .is_("llm_response", "null")
-            .limit(limit)
-            .execute()
-        ),
-        f"get_unanalyzed_papers:{limit}",
-    )
-    return result.data or []
+    def operation() -> list:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, title, venue
+                    FROM papers
+                    WHERE llm_response IS NULL
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                return cur.fetchall()
+
+    return _run_with_retry(operation, f"get_unanalyzed_papers:{limit}")

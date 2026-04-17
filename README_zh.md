@@ -11,7 +11,7 @@
 
 *&emsp;&emsp;做这个工具的起因是，老板说要看足够多的论文才会有很好的 idea 或 insight ，我觉得很对。（感谢王老师的读论文 Prompt）所以用 dify 联合飞书做了工作流，但是每次只手动输入能看一篇；后来做了好几个仓库用于批量拉取AI会议的论文，这样我可以直接看然后跳转到 dify 工作流；再然后我觉得 dify 太慢了，于是 vibe 了一个更快的工具 paper insight，直接在本地就能快速分析论文，看看摘要、关键词、相关工作推荐等，觉得有潜力就收藏到zotero里精读；我又觉得每次新的会议出来我就得新搞一个仓库太麻烦了，于是写了一个通用的爬虫脚本，能批量导入会议论文；最后我觉得如果能直接在这个工具里浏览会议论文就更好了，于是又加了一个会议浏览的功能，支持分页和关键词搜索。so，果然省事才是第一生产力。如果你喜欢这个项目，欢迎点个star哦~*
 
-&emsp;&emsp;Paper Insight 是一个基于 FastAPI 和 Supabase 的在线论文分析工具，利用 LLM 技术为用户提供快速论文分析和交互式对话能力，帮助研究人员快速理解和筛选学术论文。
+&emsp;&emsp;Paper Insight 是一个基于 FastAPI 和 PostgreSQL 的在线论文分析工具，利用 LLM 技术为用户提供快速论文分析和交互式对话能力，帮助研究人员快速理解和筛选学术论文。
 
 &emsp;&emsp;本项目旨在辅助快速浏览 AI 会议论文。通过 AI 快速生成摘要，用户可决定是否将论文收藏至 Zotero 进行精读。目前仅支持 OpenReview 平台上的论文，作为作者个人论文阅读工作流的一部分，暂无计划支持其他平台。
 
@@ -78,19 +78,40 @@ cd frontend-react
 npm install
 ```
 
-### 2. 配置环境变量
+### 2. 准备本地 PostgreSQL 16
+
+推荐使用 Homebrew 安装：
+
+```bash
+brew install postgresql@16
+brew services start postgresql@16
+createdb paper_online
+```
+
+### 3. 配置环境变量
 
 在 `backend/` 目录下创建 `.env` 文件，并填入以下内容：
 
 ```bash
+DATABASE_URL=postgresql:///paper_online
 OPEN_ROUTER_API_KEY=your_api_key_here
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your_supabase_key
 ```
 
 如果你想手动切换 LLM 提供商，也可以额外配置 `SILICONFLOW_API_KEY` 等可选变量，但当前默认运行路径使用的是 `OPEN_ROUTER_API_KEY`。
 
-### 3. 开发模式启动
+初始化数据库结构：
+
+```bash
+uv run python scripts/apply_migrations.py
+```
+
+如需最小开发数据：
+
+```bash
+uv run python scripts/apply_migrations.py --seed dev
+```
+
+### 4. 开发模式启动
 
 先启动后端：
 
@@ -106,7 +127,7 @@ cd frontend-react
 npm run dev
 ```
 
-### 4. 访问页面
+### 5. 访问页面
 
 开发模式下：
 - 前端：`http://127.0.0.1:5173`
@@ -126,6 +147,104 @@ npm run dev
 ## 停止服务
 
 在两个终端分别按 `Ctrl + C`，停止后端和前端开发服务。
+
+## 👩‍💻 开发者指南
+
+这一节只关注本地开发最常见的三件事：
+
+1. 如何启动 / 停止本机 PostgreSQL
+2. 如何准备本地开发数据库
+3. 如何准备本地开发数据
+
+### 1. 启动 / 停止本机 PostgreSQL
+
+如果你使用 Homebrew 安装的是 `postgresql@16`，最常用的命令如下：
+
+```bash
+# 启动
+brew services start postgresql@16
+
+# 停止
+brew services stop postgresql@16
+
+# 重启
+brew services restart postgresql@16
+
+# 查看状态
+brew services list | grep postgresql@16
+```
+
+如果你只是临时调试，也可以不用注册成后台服务，而是手动前台启动；但对这个项目来说，直接用 `brew services` 最省事。
+
+### 2. 准备本地开发数据库
+
+推荐默认库名就叫 `paper_online`。
+
+```bash
+# 只需执行一次
+createdb paper_online
+
+# 初始化表结构、索引、搜索函数
+DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py
+```
+
+如果你要清空重来：
+
+```bash
+dropdb --if-exists paper_online
+createdb paper_online
+DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py
+```
+
+### 3. 本地开发有两种数据准备方式
+
+#### 方式 A：最小开发数据
+
+适合只想快速启动页面、联调接口，不需要完整线上数据。
+
+```bash
+DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py --seed dev
+```
+
+#### 方式 B：从 `crawled_data/` 重新导入
+
+适合你不想依赖线上 dump，或者想重建 / 补充某个会议的数据。
+
+先确保已经初始化数据库：
+
+```bash
+DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py
+```
+
+然后按会议导入：
+
+```bash
+uv run python scripts/import_papers.py --conference neurips_2025
+uv run python scripts/import_papers.py --conference iclr_2026
+uv run python scripts/import_papers.py --conference icml_2025
+```
+
+说明：
+
+- 数据源目录固定为 `crawled_data/{conference}/`
+- 导入是**按论文覆盖式刷新**
+- `papers` 会 upsert
+- 对应论文的 `authors` / `keywords` 会先删后插
+- `llm_response` 不会在导入阶段生成，后续由用户访问或后台分析补全
+
+### 4. 推荐的本地开发顺序
+
+如果你是新贡献者，最省心的顺序是：
+
+```bash
+brew services start postgresql@16
+createdb paper_online
+cp backend/.env.example backend/.env
+# 编辑 backend/.env，填入 OPEN_ROUTER_API_KEY
+DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py --seed dev
+cd backend && uv run uvicorn app:app --reload --host 127.0.0.1 --port 8000
+cd frontend-react && npm run dev
+```
 
 ## 部署
 
@@ -166,49 +285,30 @@ http://127.0.0.1:8000
 
 如果 `frontend-react/dist` 不存在，FastAPI 现在会直接返回明确错误，提示先构建前端；不会再静默回退到旧静态前端。
 
-### Docker 部署
+### Docker / VPS 部署
 
 仓库已经包含可直接使用的 [Dockerfile](./Dockerfile)。
 它会自动：
 - 构建 `frontend-react`
 - 将 `frontend-react/dist` 复制进最终镜像
-- 只启动 FastAPI
+- 在启动前自动执行 PostgreSQL migration
+- 启动 FastAPI
 
-构建镜像：
+推荐在 VPS 上直接使用 `docker compose`：
+
+```bash
+cp .env.example .env
+# 按需修改 POSTGRES_PASSWORD、OPEN_ROUTER_API_KEY 等变量
+docker compose up --build -d
+```
+
+如果你只想构建单个应用镜像：
 
 ```bash
 docker build -t paper-insight .
 ```
 
-运行容器：
-
-```bash
-docker run -p 8000:8000 \
-  -e OPEN_ROUTER_API_KEY=your_api_key_here \
-  -e NEXT_PUBLIC_SUPABASE_URL=your_supabase_url \
-  -e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your_supabase_key \
-  paper-insight
-```
-
-### Render 部署
-
-可以，当前这套代码已经可以直接部署到 Render，推荐使用 Docker 方式。
-
-推荐配置：
-1. 将 GitHub 仓库连接到 Render。
-2. 创建新的 `Web Service`。
-3. Runtime 选择 `Docker`。
-4. Service Root 选择仓库根目录。
-5. 在 Environment 中配置环境变量：
-   - `OPEN_ROUTER_API_KEY`
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
-6. 直接部署。
-
-补充说明：
-- Render 会直接使用现有的 [Dockerfile](./Dockerfile)，不需要单独再建一个前端服务。
-- 生产环境下 React 前端由 FastAPI 直接托管。
-- 如果使用 Render 免费实例，休眠仍然是平台限制，后台任务不会阻止实例休眠。
+容器运行时需要可用的 `DATABASE_URL`，在 VPS 上推荐直接通过 `docker-compose.yml` 统一注入。
 
 ## 项目结构
 
@@ -217,17 +317,21 @@ paper_online/
 ├── backend/
 │   ├── app.py          # FastAPI 主应用
 │   ├── chat.py         # 聊天会话管理
-│   ├── database.py     # Supabase 数据库操作
+│   ├── database.py     # PostgreSQL 数据库操作
 │   ├── llm.py          # LLM 调用封装
 │   ├── prompt.py       # 系统提示词
 │   └── utils.py        # 工具函数
+├── db/
+│   ├── migrations/     # PostgreSQL 初始化与搜索函数
+│   └── seeds/          # 本地开发小样本数据
 ├── frontend-react/
 │   ├── src/            # React 前端源码
 │   ├── dist/           # 前端构建产物
 │   └── vite.config.ts  # Vite 配置
 ├── scripts/
-│   ├── import_papers.py  # 批量导入论文
-│   └── migrate_db.sql    # 数据库迁移
+│   ├── apply_migrations.py # 执行 migration / seed
+│   ├── import_papers.py    # 批量导入论文
+│   └── migrate_db.sql      # 单文件版数据库迁移
 └── crawled_data/         # 爬虫数据存储
     ├── neurips_2025/
     └── iclr_2026/
@@ -238,9 +342,9 @@ paper_online/
 如果你有会议论文的 JSONL 数据文件，可以使用以下命令批量导入：
 
 ```bash
-python scripts/import_papers.py --conference neurips_2025
-python scripts/import_papers.py --conference iclr_2026
-python scripts/import_papers.py --conference icml_2025
+uv run python scripts/import_papers.py --conference neurips_2025
+uv run python scripts/import_papers.py --conference iclr_2026
+uv run python scripts/import_papers.py --conference icml_2025
 ```
 
 数据文件应放在 `crawled_data/{conference}/` 目录下。

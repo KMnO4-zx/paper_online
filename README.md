@@ -9,7 +9,7 @@ English | [简体中文](./README_zh.md)
 
 ## 🎯 Project Introduction
 
-&emsp;&emsp;Paper Insight is an online paper analysis tool built with FastAPI and Supabase, leveraging LLM technology to provide fast paper analysis and interactive chat, helping researchers quickly understand and screen academic papers.
+&emsp;&emsp;Paper Insight is an online paper analysis tool built with FastAPI and PostgreSQL, leveraging LLM technology to provide fast paper analysis and interactive chat, helping researchers quickly understand and screen academic papers.
 
 &emsp;&emsp;This project aims to assist in quickly browsing AI conference papers. Through AI-generated summaries, users can decide whether to save papers to Zotero for in-depth reading. Currently supports papers from the OpenReview platform only, as part of the author's personal paper reading workflow, with no plans to support other platforms.
 
@@ -76,19 +76,40 @@ cd frontend-react
 npm install
 ```
 
-### 2. Configure Environment Variables
+### 2. Prepare Local PostgreSQL 16
+
+Using Homebrew on macOS:
+
+```bash
+brew install postgresql@16
+brew services start postgresql@16
+createdb paper_online
+```
+
+### 3. Configure Environment Variables
 
 Create a `.env` file in the `backend/` directory with the following content:
 
 ```bash
+DATABASE_URL=postgresql:///paper_online
 OPEN_ROUTER_API_KEY=your_api_key_here
-NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
-NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your_supabase_key
 ```
 
 If you want to switch providers manually, you can also configure optional keys such as `SILICONFLOW_API_KEY`, but the current default runtime uses `OPEN_ROUTER_API_KEY`.
 
-### 3. Start in Development Mode
+Initialize the database schema:
+
+```bash
+uv run python scripts/apply_migrations.py
+```
+
+For a minimal local dataset:
+
+```bash
+uv run python scripts/apply_migrations.py --seed dev
+```
+
+### 4. Start in Development Mode
 
 Start the backend:
 
@@ -104,7 +125,7 @@ cd frontend-react
 npm run dev
 ```
 
-### 4. Access the Application
+### 5. Access the Application
 
 Development mode:
 - Frontend: `http://127.0.0.1:5173`
@@ -122,6 +143,104 @@ Legacy query-style URLs such as `/?id=...`, `/?conference=...`, and `/?search=..
 ## Stop Service
 
 Press `Ctrl + C` in each terminal to stop the backend and frontend dev servers.
+
+## 👩‍💻 Developer Guide
+
+This section focuses on the three common local-development tasks:
+
+1. Start / stop local PostgreSQL
+2. Prepare the local development database
+3. Prepare local development data
+
+### 1. Start / stop local PostgreSQL
+
+If you installed `postgresql@16` with Homebrew on macOS, these are the commands you will use most often:
+
+```bash
+# Start
+brew services start postgresql@16
+
+# Stop
+brew services stop postgresql@16
+
+# Restart
+brew services restart postgresql@16
+
+# Check status
+brew services list | grep postgresql@16
+```
+
+You can also run PostgreSQL manually in the foreground, but for this repo `brew services` is the simplest path.
+
+### 2. Prepare the local development database
+
+Use `paper_online` as the default local database name:
+
+```bash
+# Run once
+createdb paper_online
+
+# Initialize tables, indexes, and search functions
+DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py
+```
+
+If you want to reset everything:
+
+```bash
+dropdb --if-exists paper_online
+createdb paper_online
+DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py
+```
+
+### 3. Two ways to prepare local data
+
+#### Option A: minimal dev seed
+
+Good for booting the UI quickly and validating APIs without full production data.
+
+```bash
+DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py --seed dev
+```
+
+#### Option B: rebuild from `crawled_data/`
+
+Use this if you do not want to depend on the online dump, or if you want to rebuild / add conference data from crawler output.
+
+First initialize the database:
+
+```bash
+DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py
+```
+
+Then import by conference:
+
+```bash
+uv run python scripts/import_papers.py --conference neurips_2025
+uv run python scripts/import_papers.py --conference iclr_2026
+uv run python scripts/import_papers.py --conference icml_2025
+```
+
+Notes:
+
+- Source directory is always `crawled_data/{conference}/`
+- Import is overwrite-style per paper
+- `papers` uses upsert
+- `authors` and `keywords` are deleted then re-inserted for touched papers
+- `llm_response` is not generated during import; it is filled later by user-triggered analysis or the background analyzer
+
+### 4. Recommended local dev flow
+
+For a new contributor, this is the shortest path:
+
+```bash
+brew services start postgresql@16
+createdb paper_online
+cp backend/.env.example backend/.env
+# edit backend/.env and fill OPEN_ROUTER_API_KEY
+DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py --seed dev
+cd backend && uv run uvicorn app:app --reload --host 127.0.0.1 --port 8000
+cd frontend-react && npm run dev
+```
 
 ## Deployment
 
@@ -162,46 +281,26 @@ http://127.0.0.1:8000
 
 If `frontend-react/dist` does not exist, FastAPI now returns a clear error telling you to build the frontend first. There is no legacy static frontend fallback anymore.
 
-### Docker Deployment
+### Docker / VPS Deployment
 
 This repository includes a production-ready [Dockerfile](./Dockerfile).
-It builds `frontend-react`, copies `frontend-react/dist` into the final image, and starts FastAPI only.
+It builds `frontend-react`, copies `frontend-react/dist` into the final image, applies PostgreSQL migrations on startup, and launches FastAPI.
 
-Build the image:
+For VPS deployment, prefer `docker compose`:
+
+```bash
+cp .env.example .env
+# Fill in POSTGRES_PASSWORD, OPEN_ROUTER_API_KEY, and any optional LLM keys.
+docker compose up --build -d
+```
+
+If you only need the application image:
 
 ```bash
 docker build -t paper-insight .
 ```
 
-Run the container:
-
-```bash
-docker run -p 8000:8000 \
-  -e OPEN_ROUTER_API_KEY=your_api_key_here \
-  -e NEXT_PUBLIC_SUPABASE_URL=your_supabase_url \
-  -e NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY=your_supabase_key \
-  paper-insight
-```
-
-### Render Deployment
-
-Yes, the current repository can be deployed to Render directly using Docker.
-
-Recommended setup:
-1. Connect the GitHub repository to Render.
-2. Create a new `Web Service`.
-3. Choose `Docker` as the runtime.
-4. Use the repository root as the service root.
-5. Configure environment variables:
-   - `OPEN_ROUTER_API_KEY`
-   - `NEXT_PUBLIC_SUPABASE_URL`
-   - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_DEFAULT_KEY`
-6. Deploy.
-
-Notes:
-- Render will use the existing [Dockerfile](./Dockerfile); no separate frontend service is needed.
-- The React frontend is served by FastAPI in production.
-- On Render free instances, sleeping is still a product constraint. Background tasks do not prevent the instance from sleeping.
+At runtime, the app expects a valid `DATABASE_URL`. On VPS, the included `docker-compose.yml` wires the app to a PostgreSQL 16 container automatically.
 
 ## Project Structure
 
@@ -210,17 +309,21 @@ paper_online/
 ├── backend/
 │   ├── app.py          # FastAPI main application
 │   ├── chat.py         # Chat session management
-│   ├── database.py     # Supabase database operations
+│   ├── database.py     # PostgreSQL database operations
 │   ├── llm.py          # LLM API wrapper
 │   ├── prompt.py       # System prompts
 │   └── utils.py        # Utility functions
+├── db/
+│   ├── migrations/     # PostgreSQL schema and search functions
+│   └── seeds/          # Minimal local development dataset
 ├── frontend-react/
 │   ├── src/            # React frontend source code
 │   ├── dist/           # Built frontend assets
 │   └── vite.config.ts  # Vite config
 ├── scripts/
-│   ├── import_papers.py  # Batch import papers
-│   └── migrate_db.sql    # Database migration
+│   ├── apply_migrations.py # Apply migrations / optional seed
+│   ├── import_papers.py    # Batch import papers
+│   └── migrate_db.sql      # Single-file database migration
 └── crawled_data/         # Crawler data storage
     ├── neurips_2025/
     └── iclr_2026/
@@ -231,9 +334,9 @@ paper_online/
 If you have JSONL data files of conference papers, you can batch import them using:
 
 ```bash
-python scripts/import_papers.py --conference neurips_2025
-python scripts/import_papers.py --conference iclr_2026
-python scripts/import_papers.py --conference icml_2025
+uv run python scripts/import_papers.py --conference neurips_2025
+uv run python scripts/import_papers.py --conference iclr_2026
+uv run python scripts/import_papers.py --conference icml_2025
 ```
 
 Data files should be placed in the `crawled_data/{conference}/` directory.

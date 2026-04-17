@@ -208,6 +208,7 @@ __marimo__/
 
 # database
 *.db
+db/dumps/
 
 # Mac OS
 .DS_Store
