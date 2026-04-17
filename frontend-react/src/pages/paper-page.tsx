@@ -147,6 +147,18 @@ export function PaperPage({ paperId }: PaperPageProps) {
   const keywords = normalizeKeywords(paper?.keywords);
   const openReviewUrl = `https://openreview.net/forum?id=${paperId}`;
   const pdfUrl = paper?.pdf || `https://openreview.net/pdf?id=${paperId}`;
+  const kimiPrefillPrompt = [
+    '你是一位人工智能领域的专家。我是一位刚入门的人工智能新人，正在学习这篇论文。请你详细的向我讲解教授这篇论文，必要的时候用公式或者代码辅助解释。确保我能够理解每个细节和背景知识和理解论文的motivation还有方法。',
+    '具体来说，请你',
+    '1. 必须详细的讲给我研究背景和动机。 (尽可能的详细)',
+    '2. 详细的介绍核心贡献和方法。 (尽可能的详细)',
+    '3. 详细的讲方法的具体实现，必要的时候有公式和代码。 (尽可能的详细)',
+    '4. 详细的讲一下实验的结果，包括实验的setting和结论。 (尽可能的详细)',
+    '务必按照我的要求做，让我听懂，不然你会有大麻烦。',
+    '',
+    `论文 PDF 链接：${pdfUrl}`,
+  ].join('\n');
+  const kimiUrl = `https://www.kimi.com/?prefill_prompt=${encodeURIComponent(kimiPrefillPrompt)}&send_immediately=true`;
   const isBackButtonHidden = backButtonProgress >= 1;
   const backButtonOpacity = 1 - backButtonProgress;
 
@@ -237,6 +249,12 @@ export function PaperPage({ paperId }: PaperPageProps) {
                     <Button variant="outline" className="rounded-full border-[#bfdbfe] bg-[#eff6ff] text-[#2563eb]">
                       <FileText className="mr-1.5 h-4 w-4" />
                       PDF
+                    </Button>
+                  </a>
+                  <a href={kimiUrl} target="_blank" rel="noreferrer">
+                    <Button variant="outline" className="rounded-full border-[#d8b4fe] bg-[#faf5ff] text-[#9333ea]">
+                      <Sparkles className="mr-1.5 h-4 w-4" />
+                      Open in KIMI
                     </Button>
                   </a>
                   <Button
