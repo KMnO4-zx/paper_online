@@ -8,6 +8,7 @@ import psycopg
 from dotenv import find_dotenv, load_dotenv
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from utils import get_openreview_pdf_url, normalize_paper_pdf_url
 
 load_dotenv(find_dotenv())
 
@@ -119,7 +120,7 @@ def get_paper(paper_id: str) -> dict | None:
                     (paper_id,),
                 )
                 paper["keywords"] = [row["keyword"] for row in cur.fetchall()]
-                paper["pdf"] = paper.get("pdf") or f"https://openreview.net/pdf?id={paper_id}"
+                paper["pdf"] = normalize_paper_pdf_url(paper_id, paper.get("pdf")) or get_openreview_pdf_url(paper_id)
                 return paper
 
     return _run_with_retry(operation, f"get_paper:{paper_id}")
@@ -130,6 +131,7 @@ def save_paper(paper_info: dict, llm_response: str = None):
         return
 
     def operation() -> None:
+        normalized_pdf = normalize_paper_pdf_url(paper_info["id"], paper_info.get("pdf"))
         with _get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -159,7 +161,7 @@ def save_paper(paper_info: dict, llm_response: str = None):
                         paper_info.get("title"),
                         paper_info.get("abstract"),
                         Jsonb(paper_info.get("keywords", [])),
-                        paper_info.get("pdf"),
+                        normalized_pdf,
                         paper_info.get("venue"),
                         paper_info.get("primary_area"),
                         llm_response,

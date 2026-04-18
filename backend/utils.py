@@ -24,6 +24,8 @@ HEADERS = {
 }
 
 DEFAULT_PAPER_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "paper_cache"
+OPENREVIEW_PDF_URL_PREFIX = "https://openreview.net/pdf?id="
+_OPENREVIEW_URL_PATTERN = re.compile(r"^https://openreview\.net/(?:attachment|pdf)\?")
 
 
 class ReaderError(Exception):
@@ -34,6 +36,26 @@ class ReaderError(Exception):
 class OpenReviewError(Exception):
     """OpenReview API 请求失败"""
     pass
+
+
+def get_openreview_pdf_url(paper_id: str) -> str:
+    return f"{OPENREVIEW_PDF_URL_PREFIX}{paper_id}"
+
+
+def normalize_paper_pdf_url(paper_id: str, pdf_url: str | None) -> str | None:
+    if pdf_url is None:
+        return None
+
+    normalized_url = pdf_url.strip()
+    if not normalized_url:
+        return None
+
+    # Normalize all OpenReview PDF variants to one canonical form so DB rows
+    # and cache metadata stay stable.
+    if _OPENREVIEW_URL_PATTERN.match(normalized_url):
+        return get_openreview_pdf_url(paper_id)
+
+    return normalized_url
 
 
 def _get_paper_cache_dir() -> Path:
@@ -50,6 +72,7 @@ def _get_paper_cache_paths(paper_id: str) -> tuple[Path, Path]:
 
 
 def has_cached_paper_content(paper_id: str, pdf_url: str | None = None) -> bool:
+    pdf_url = normalize_paper_pdf_url(paper_id, pdf_url)
     content_path, meta_path = _get_paper_cache_paths(paper_id)
     if not content_path.exists():
         return False
@@ -67,7 +90,7 @@ def has_cached_paper_content(paper_id: str, pdf_url: str | None = None) -> bool:
             logger.warning("论文正文缓存元数据损坏，忽略缓存: %s", meta_path)
             return False
 
-        cached_pdf_url = metadata.get("pdf_url")
+        cached_pdf_url = normalize_paper_pdf_url(paper_id, metadata.get("pdf_url"))
         if cached_pdf_url and cached_pdf_url != pdf_url:
             logger.info("论文 %s 的 PDF 地址已变化，重新抓取正文缓存", paper_id)
             return False
@@ -76,6 +99,7 @@ def has_cached_paper_content(paper_id: str, pdf_url: str | None = None) -> bool:
 
 
 def get_cached_paper_content(paper_id: str, pdf_url: str | None = None) -> str | None:
+    pdf_url = normalize_paper_pdf_url(paper_id, pdf_url)
     content_path, _ = _get_paper_cache_paths(paper_id)
     if not has_cached_paper_content(paper_id, pdf_url):
         logger.info("论文正文缓存未命中: %s", paper_id)
@@ -107,10 +131,11 @@ def cache_paper_content(paper_id: str, pdf_url: str, content: str) -> None:
         logger.warning("论文正文为空，跳过缓存: %s", paper_id)
         return
 
+    normalized_pdf_url = normalize_paper_pdf_url(paper_id, pdf_url) or pdf_url
     content_path, meta_path = _get_paper_cache_paths(paper_id)
     metadata = {
         "paper_id": paper_id,
-        "pdf_url": pdf_url,
+        "pdf_url": normalized_pdf_url,
         "source": "jina_reader",
         "cached_at": datetime.now(timezone.utc).isoformat(),
         "size_bytes": len(content.encode("utf-8")),
@@ -128,12 +153,13 @@ def cache_paper_content(paper_id: str, pdf_url: str, content: str) -> None:
 
 
 def get_or_cache_paper_content(paper_id: str, pdf_url: str) -> str:
-    cached_content = get_cached_paper_content(paper_id, pdf_url)
+    normalized_pdf_url = normalize_paper_pdf_url(paper_id, pdf_url) or pdf_url
+    cached_content = get_cached_paper_content(paper_id, normalized_pdf_url)
     if cached_content is not None:
         return cached_content
 
-    content = reader(pdf_url)
-    cache_paper_content(paper_id, pdf_url, content)
+    content = reader(normalized_pdf_url)
+    cache_paper_content(paper_id, normalized_pdf_url, content)
     return content
 
 
@@ -197,7 +223,7 @@ def get_openreview_info(paper_id: str) -> dict | None:
                 "keywords": content.get("keywords", {}).get("value", []),
                 "primary_area": content.get("primary_area", {}).get("value"),
                 "venue": content.get("venue", {}).get("value"),
-                "pdf": f"https://openreview.net/attachment?id={note['id']}&name=pdf",
+                "pdf": get_openreview_pdf_url(note["id"]),
             }
         except requests.Timeout:
             logger.warning(f"OpenReview API 超时 (尝试 {attempt + 1}/{MAX_RETRIES})")
@@ -212,7 +238,7 @@ def get_openreview_info(paper_id: str) -> dict | None:
 
 
 if __name__ == "__main__":
-    sample_url = "https://openreview.net/attachment?id=uq6UWRgzMr&name=pdf"
+    sample_url = "https://openreview.net/pdf?id=uq6UWRgzMr"
     # content = reader(sample_url)
     # print(content)
 

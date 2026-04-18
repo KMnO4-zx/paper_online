@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -14,6 +15,21 @@ load_dotenv(repo_root / "backend" / ".env")
 load_dotenv(repo_root / ".env")
 
 DATABASE_URL = os.getenv("DATABASE_URL")
+OPENREVIEW_URL_PATTERN = re.compile(r"^https://openreview\.net/(?:attachment|pdf)\?")
+
+
+def _normalize_pdf_url(paper_id: str, pdf_url: str | None) -> str | None:
+    if pdf_url is None:
+        return None
+
+    normalized_url = pdf_url.strip()
+    if not normalized_url:
+        return None
+
+    if OPENREVIEW_URL_PATTERN.match(normalized_url):
+        return f"https://openreview.net/pdf?id={paper_id}"
+
+    return normalized_url
 
 
 def import_conference(conference_name: str):
@@ -81,7 +97,7 @@ def _parse_line(line: str) -> tuple[tuple, list[tuple], list[tuple]]:
         content["title"]["value"],
         content["abstract"]["value"],
         Jsonb(keyword_values),
-        content.get("pdf", {}).get("value"),
+        _normalize_pdf_url(paper_id, content.get("pdf", {}).get("value")),
         content["venue"]["value"],
         content["primary_area"]["value"],
     )
