@@ -1,18 +1,17 @@
 #!/usr/bin/env python3
 import argparse
-import os
 import sys
 from pathlib import Path
 
 import psycopg
-from dotenv import load_dotenv
 
 repo_root = Path(__file__).parent.parent
-load_dotenv(repo_root / "backend" / ".env")
-load_dotenv(repo_root / ".env")
+sys.path.insert(0, str(repo_root / "backend"))
 
-DATABASE_URL = os.getenv("DATABASE_URL")
-MIGRATIONS_DIR = repo_root / "db" / "migrations"
+from config import settings
+from migrations import apply_migrations
+
+DATABASE_URL = settings.database.url
 SEEDS_DIR = repo_root / "db" / "seeds"
 
 
@@ -37,18 +36,11 @@ def main() -> int:
     args = parser.parse_args()
 
     if not DATABASE_URL:
-        print("Error: DATABASE_URL not found in environment variables", file=sys.stderr)
+        print("Error: database.url not found in config.yaml", file=sys.stderr)
         return 1
 
-    migration_files = sorted(MIGRATIONS_DIR.glob("*.sql"))
-    if not migration_files:
-        print("Error: no migration files found", file=sys.stderr)
-        return 1
-
+    apply_migrations()
     with psycopg.connect(DATABASE_URL) as conn:
-        for migration_file in migration_files:
-            apply_sql_file(conn, migration_file)
-
         if args.seed == "dev":
             apply_sql_file(conn, SEEDS_DIR / "dev_seed.sql")
 

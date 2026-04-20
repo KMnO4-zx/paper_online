@@ -28,6 +28,23 @@ export function getPaperMarks(paperId: string): PaperMark {
   }
 }
 
+export function getAllPaperMarks(): Record<string, PaperMark> {
+  const raw = window.localStorage.getItem(PAPER_MARKS_KEY);
+  if (!raw) {
+    return {};
+  }
+
+  try {
+    return JSON.parse(raw) as Record<string, PaperMark>;
+  } catch {
+    return {};
+  }
+}
+
+export function clearPaperMarks(): void {
+  window.localStorage.removeItem(PAPER_MARKS_KEY);
+}
+
 export function setPaperMark(paperId: string, markType: keyof PaperMark, value: boolean): PaperMark {
   const raw = window.localStorage.getItem(PAPER_MARKS_KEY);
   const parsed = raw ? (JSON.parse(raw) as Record<string, PaperMark>) : {};

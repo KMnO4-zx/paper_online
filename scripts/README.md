@@ -19,11 +19,13 @@
 
 ## 本地初始化数据库
 
-先在 `backend/.env` 或根目录 `.env` 中配置：
+先复制并编辑根目录配置：
 
 ```bash
-DATABASE_URL=postgresql:///paper_online
+cp config.yaml.example config.yaml
 ```
+
+确认 `config.yaml` 中的 `database.url` 指向本地 PostgreSQL。
 
 执行 migration：
 
@@ -75,14 +77,13 @@ PG_DUMP_BIN=/opt/homebrew/opt/postgresql@17/bin/pg_dump ./scripts/export_supabas
 先执行仓库 migration，再恢复数据：
 
 ```bash
-DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py
-DATABASE_URL=postgresql:///paper_online ./scripts/restore_supabase_dump.sh
+uv run python scripts/apply_migrations.py
+./scripts/restore_supabase_dump.sh
 ```
 
 如果本机装了多个客户端版本，也可以显式指定：
 
 ```bash
-DATABASE_URL=postgresql:///paper_online \
 PG_RESTORE_BIN=/opt/homebrew/opt/postgresql@17/bin/pg_restore \
 PSQL_BIN=/opt/homebrew/opt/postgresql@16/bin/psql \
 ./scripts/restore_supabase_dump.sh

@@ -1,11 +1,13 @@
 import { Eye, Heart } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 
 import { RichContent } from '@/components/rich-content';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { fetchPaperMarks, updatePaperMark } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { getVenueParts, normalizeKeywords } from '@/lib/content';
-import { getPaperMarks, setPaperMark } from '@/lib/storage';
+import { navigate } from '@/lib/router';
 import type { Paper } from '@/types';
 
 interface PaperCardProps {
@@ -39,10 +41,46 @@ function getKeywordColor(index: number) {
 }
 
 export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
-  const [marks, setMarks] = useState(() => getPaperMarks(paper.id));
+  const { user, isLoading } = useAuth();
+  const [marks, setMarks] = useState({ viewed: false, liked: false });
   const [isLikeAnimating, setIsLikeAnimating] = useState(false);
   const keywords = normalizeKeywords(paper.keywords).slice(0, 6);
   const venue = getVenueParts(paper.venue);
+
+  useEffect(() => {
+    let active = true;
+    setMarks({ viewed: false, liked: false });
+    if (isLoading || !user) {
+      return () => {
+        active = false;
+      };
+    }
+    void fetchPaperMarks([paper.id])
+      .then((nextMarks) => {
+        if (active) {
+          setMarks(nextMarks[paper.id] ?? { viewed: false, liked: false });
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setMarks({ viewed: false, liked: false });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [isLoading, paper.id, user]);
+
+  const requireLogin = () => {
+    if (isLoading) {
+      return false;
+    }
+    if (!user) {
+      navigate('/login');
+      return false;
+    }
+    return true;
+  };
 
   return (
     <article
@@ -89,7 +127,10 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
             size="sm"
             onClick={(event) => {
               event.stopPropagation();
-              setMarks(setPaperMark(paper.id, 'viewed', !marks.viewed));
+              if (!requireLogin()) {
+                return;
+              }
+              void updatePaperMark(paper.id, { viewed: !marks.viewed }).then(setMarks);
             }}
             className={`rounded-full ${
               marks.viewed
@@ -106,8 +147,11 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
             size="sm"
             onClick={(event) => {
               event.stopPropagation();
+              if (!requireLogin()) {
+                return;
+              }
               setIsLikeAnimating(true);
-              setMarks(setPaperMark(paper.id, 'liked', !marks.liked));
+              void updatePaperMark(paper.id, { liked: !marks.liked }).then(setMarks);
               window.setTimeout(() => setIsLikeAnimating(false), 400);
             }}
             className={`rounded-full ${

@@ -1,18 +1,16 @@
 import logging
-import os
 import time
 from contextlib import contextmanager
+from datetime import datetime, timedelta, timezone
 from typing import Callable, Iterator, TypeVar
 
 import psycopg
-from dotenv import find_dotenv, load_dotenv
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from config import settings
 from utils import get_openreview_pdf_url, normalize_paper_pdf_url
 
-load_dotenv(find_dotenv())
-
-DATABASE_URL = os.getenv("DATABASE_URL")
+DATABASE_URL = settings.database.url
 
 logger = logging.getLogger(__name__)
 T = TypeVar("T")
@@ -25,6 +23,23 @@ _CACHE_TTL_SECONDS = 86400
 
 class DatabaseError(Exception):
     """Raised when database access fails after retries."""
+
+
+def _normalize_user_row(row: dict | None) -> dict | None:
+    if not row:
+        return None
+    normalized = dict(row)
+    normalized["id"] = str(normalized["id"])
+    return normalized
+
+
+def _normalize_session_row(row: dict | None) -> dict | None:
+    if not row:
+        return None
+    normalized = dict(row)
+    if normalized.get("account_user_id") is not None:
+        normalized["account_user_id"] = str(normalized["account_user_id"])
+    return normalized
 
 
 def _run_with_retry(
@@ -218,6 +233,552 @@ def update_llm_response(paper_id: str, response: str):
     _run_with_retry(operation, f"update_llm_response:{paper_id}")
 
 
+def create_user(
+    email: str,
+    email_normalized: str,
+    password_hash: str,
+    role: str = "user",
+    email_verified: bool = False,
+) -> dict:
+    def operation() -> dict:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO users (email, email_normalized, password_hash, role, email_verified)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING *
+                    """,
+                    (email, email_normalized, password_hash, role, email_verified),
+                )
+                user = cur.fetchone()
+            conn.commit()
+        return _normalize_user_row(user)
+
+    return _run_with_retry(operation, f"create_user:{email_normalized}")
+
+
+def get_user_by_email(email_normalized: str) -> dict | None:
+    if not DATABASE_URL:
+        return None
+
+    def operation() -> dict | None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM users WHERE email_normalized = %s", (email_normalized,))
+                return _normalize_user_row(cur.fetchone())
+
+    return _run_with_retry(operation, f"get_user_by_email:{email_normalized}")
+
+
+def get_user_by_id(user_id: str) -> dict | None:
+    if not DATABASE_URL:
+        return None
+
+    def operation() -> dict | None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM users WHERE id = %s", (user_id,))
+                return _normalize_user_row(cur.fetchone())
+
+    return _run_with_retry(operation, f"get_user_by_id:{user_id}")
+
+
+def update_user_password(user_id: str, password_hash: str) -> None:
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET password_hash = %s, updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (password_hash, user_id),
+                )
+            conn.commit()
+
+    _run_with_retry(operation, f"update_user_password:{user_id}")
+
+
+def update_user_last_login(user_id: str) -> None:
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE users
+                    SET last_login_at = NOW(), updated_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (user_id,),
+                )
+            conn.commit()
+
+    _run_with_retry(operation, f"update_user_last_login:{user_id}")
+
+
+def ensure_admin_user(email: str, email_normalized: str, password_hash: str) -> dict:
+    def operation() -> dict:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM users WHERE email_normalized = %s", (email_normalized,))
+                existing = cur.fetchone()
+                if existing:
+                    cur.execute(
+                        """
+                        UPDATE users
+                        SET role = 'admin', is_active = TRUE, updated_at = NOW()
+                        WHERE id = %s
+                        RETURNING *
+                        """,
+                        (existing["id"],),
+                    )
+                    user = cur.fetchone()
+                else:
+                    cur.execute(
+                        """
+                        INSERT INTO users (email, email_normalized, password_hash, role, email_verified)
+                        VALUES (%s, %s, %s, 'admin', TRUE)
+                        RETURNING *
+                        """,
+                        (email, email_normalized, password_hash),
+                    )
+                    user = cur.fetchone()
+            conn.commit()
+        return _normalize_user_row(user)
+
+    return _run_with_retry(operation, f"ensure_admin_user:{email_normalized}")
+
+
+def create_user_session(
+    user_id: str,
+    token_hash: str,
+    expires_at: datetime,
+    user_agent: str | None = None,
+    ip_address: str | None = None,
+) -> None:
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO user_sessions (user_id, token_hash, expires_at, user_agent, ip_address)
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (user_id, token_hash, expires_at, user_agent, ip_address),
+                )
+            conn.commit()
+
+    _run_with_retry(operation, f"create_user_session:{user_id}")
+
+
+def get_user_by_session_token_hash(token_hash: str) -> dict | None:
+    if not DATABASE_URL:
+        return None
+
+    def operation() -> dict | None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT users.*
+                    FROM user_sessions
+                    JOIN users ON users.id = user_sessions.user_id
+                    WHERE user_sessions.token_hash = %s
+                      AND user_sessions.revoked_at IS NULL
+                      AND user_sessions.expires_at > NOW()
+                      AND users.is_active = TRUE
+                    """,
+                    (token_hash,),
+                )
+                user = cur.fetchone()
+                if user:
+                    cur.execute(
+                        """
+                        UPDATE user_sessions
+                        SET last_seen_at = NOW()
+                        WHERE token_hash = %s
+                        """,
+                        (token_hash,),
+                    )
+                    conn.commit()
+                return _normalize_user_row(user)
+
+    return _run_with_retry(operation, "get_user_by_session_token_hash")
+
+
+def revoke_session(token_hash: str) -> None:
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE user_sessions
+                    SET revoked_at = NOW()
+                    WHERE token_hash = %s AND revoked_at IS NULL
+                    """,
+                    (token_hash,),
+                )
+            conn.commit()
+
+    _run_with_retry(operation, "revoke_session")
+
+
+def revoke_user_sessions(user_id: str, except_token_hash: str | None = None) -> None:
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                if except_token_hash:
+                    cur.execute(
+                        """
+                        UPDATE user_sessions
+                        SET revoked_at = NOW()
+                        WHERE user_id = %s AND token_hash <> %s AND revoked_at IS NULL
+                        """,
+                        (user_id, except_token_hash),
+                    )
+                else:
+                    cur.execute(
+                        """
+                        UPDATE user_sessions
+                        SET revoked_at = NOW()
+                        WHERE user_id = %s AND revoked_at IS NULL
+                        """,
+                        (user_id,),
+                    )
+            conn.commit()
+
+    _run_with_retry(operation, f"revoke_user_sessions:{user_id}")
+
+
+def count_active_admins() -> int:
+    def operation() -> int:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS total FROM users WHERE role = 'admin' AND is_active = TRUE")
+                row = cur.fetchone()
+                return int(row["total"] or 0)
+
+    return _run_with_retry(operation, "count_active_admins")
+
+
+def list_users(search: str | None, offset: int, limit: int) -> tuple[list[dict], int]:
+    def operation() -> tuple[list[dict], int]:
+        params: list[object] = []
+        where = ""
+        if search:
+            where = "WHERE email ILIKE %s"
+            params.append(f"%{search}%")
+
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(f"SELECT COUNT(*) AS total FROM users {where}", params)
+                total = int(cur.fetchone()["total"] or 0)
+                cur.execute(
+                    f"""
+                    SELECT id, email, role, is_active, email_verified, created_at, last_login_at
+                    FROM users
+                    {where}
+                    ORDER BY created_at DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [*params, limit, offset],
+                )
+                users = [_normalize_user_row(row) for row in cur.fetchall()]
+        return users, total
+
+    return _run_with_retry(operation, "list_users")
+
+
+def update_user_admin_fields(
+    user_id: str,
+    role: str | None = None,
+    is_active: bool | None = None,
+) -> dict | None:
+    def operation() -> dict | None:
+        updates = []
+        params: list[object] = []
+        if role is not None:
+            updates.append("role = %s")
+            params.append(role)
+        if is_active is not None:
+            updates.append("is_active = %s")
+            params.append(is_active)
+        if not updates:
+            return get_user_by_id(user_id)
+
+        params.append(user_id)
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    UPDATE users
+                    SET {", ".join(updates)}, updated_at = NOW()
+                    WHERE id = %s
+                    RETURNING id, email, role, is_active, email_verified, created_at, last_login_at
+                    """,
+                    params,
+                )
+                user = cur.fetchone()
+            conn.commit()
+        return _normalize_user_row(user)
+
+    return _run_with_retry(operation, f"update_user_admin_fields:{user_id}")
+
+
+def get_paper_marks(user_id: str, paper_ids: list[str]) -> dict[str, dict]:
+    if not paper_ids:
+        return {}
+
+    def operation() -> dict[str, dict]:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT paper_id, viewed, liked, viewed_at, liked_at, updated_at
+                    FROM paper_marks
+                    WHERE user_id = %s AND paper_id = ANY(%s)
+                    """,
+                    (user_id, paper_ids),
+                )
+                rows = cur.fetchall()
+        return {
+            row["paper_id"]: {
+                "viewed": bool(row["viewed"]),
+                "liked": bool(row["liked"]),
+                "viewed_at": row["viewed_at"],
+                "liked_at": row["liked_at"],
+                "updated_at": row["updated_at"],
+            }
+            for row in rows
+        }
+
+    return _run_with_retry(operation, f"get_paper_marks:{user_id}")
+
+
+def list_marked_papers(
+    user_id: str,
+    mark_filter: str,
+    sort: str,
+    offset: int,
+    limit: int,
+) -> tuple[list[dict], int]:
+    filter_clauses = {
+        "all": "(pm.viewed = TRUE OR pm.liked = TRUE)",
+        "viewed": "pm.viewed = TRUE",
+        "liked": "pm.liked = TRUE",
+    }
+    sort_clauses = {
+        "viewed_at": "pm.viewed_at DESC NULLS LAST, pm.updated_at DESC",
+        "liked_at": "pm.liked_at DESC NULLS LAST, pm.updated_at DESC",
+        "liked_first": "pm.liked DESC, pm.liked_at DESC NULLS LAST, pm.viewed_at DESC NULLS LAST, pm.updated_at DESC",
+        "updated_at": "pm.updated_at DESC",
+        "title": "LOWER(p.title) ASC NULLS LAST",
+    }
+    where_clause = filter_clauses.get(mark_filter, filter_clauses["all"])
+    order_clause = sort_clauses.get(sort, sort_clauses["viewed_at"])
+
+    def operation() -> tuple[list[dict], int]:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT
+                        p.id,
+                        p.title,
+                        p.abstract,
+                        p.keywords,
+                        p.pdf,
+                        p.venue,
+                        p.primary_area,
+                        p.llm_response,
+                        p.created_at,
+                        pm.viewed,
+                        pm.liked,
+                        pm.viewed_at,
+                        pm.liked_at,
+                        pm.updated_at AS mark_updated_at
+                    FROM paper_marks pm
+                    JOIN papers p ON p.id = pm.paper_id
+                    WHERE pm.user_id = %s AND {where_clause}
+                    ORDER BY {order_clause}, p.id ASC
+                    LIMIT %s OFFSET %s
+                    """,
+                    (user_id, limit, offset),
+                )
+                rows = cur.fetchall()
+
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) AS total
+                    FROM paper_marks pm
+                    WHERE pm.user_id = %s AND {where_clause}
+                    """,
+                    (user_id,),
+                )
+                total = int((cur.fetchone() or {}).get("total") or 0)
+
+        papers = [
+            {
+                "id": row["id"],
+                "title": row.get("title"),
+                "abstract": row.get("abstract"),
+                "keywords": row.get("keywords") or [],
+                "pdf": normalize_paper_pdf_url(row["id"], row.get("pdf")) or get_openreview_pdf_url(row["id"]),
+                "venue": row.get("venue"),
+                "primary_area": row.get("primary_area"),
+                "llm_response": row.get("llm_response"),
+                "created_at": row.get("created_at"),
+            }
+            for row in rows
+        ]
+        papers, _ = _load_keywords_for_papers(papers)
+
+        items = [
+            {
+                "paper": paper,
+                "mark": {
+                    "viewed": bool(row["viewed"]),
+                    "liked": bool(row["liked"]),
+                    "viewed_at": row["viewed_at"],
+                    "liked_at": row["liked_at"],
+                    "updated_at": row["mark_updated_at"],
+                },
+            }
+            for paper, row in zip(papers, rows)
+        ]
+        return items, total
+
+    return _run_with_retry(operation, f"list_marked_papers:{user_id}:{mark_filter}:{sort}")
+
+
+def set_paper_mark(
+    user_id: str,
+    paper_id: str,
+    viewed: bool | None = None,
+    liked: bool | None = None,
+) -> dict:
+    def operation() -> dict:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT viewed, liked
+                    FROM paper_marks
+                    WHERE user_id = %s AND paper_id = %s
+                    """,
+                    (user_id, paper_id),
+                )
+                existing = cur.fetchone() or {"viewed": False, "liked": False}
+                next_viewed = bool(existing["viewed"]) if viewed is None else viewed
+                next_liked = bool(existing["liked"]) if liked is None else liked
+                if next_liked:
+                    next_viewed = True
+                if not next_viewed:
+                    next_liked = False
+
+                cur.execute(
+                    """
+                    INSERT INTO paper_marks (
+                        user_id, paper_id, viewed, liked, viewed_at, liked_at, updated_at
+                    )
+                    VALUES (
+                        %s, %s, %s, %s,
+                        CASE WHEN %s THEN NOW() ELSE NULL END,
+                        CASE WHEN %s THEN NOW() ELSE NULL END,
+                        NOW()
+                    )
+                    ON CONFLICT (user_id, paper_id) DO UPDATE SET
+                        viewed = EXCLUDED.viewed,
+                        liked = EXCLUDED.liked,
+                        viewed_at = CASE
+                            WHEN EXCLUDED.viewed THEN COALESCE(paper_marks.viewed_at, NOW())
+                            ELSE NULL
+                        END,
+                        liked_at = CASE
+                            WHEN EXCLUDED.liked THEN COALESCE(paper_marks.liked_at, NOW())
+                            ELSE NULL
+                        END,
+                        updated_at = NOW()
+                    RETURNING paper_id, viewed, liked, viewed_at, liked_at, updated_at
+                    """,
+                    (user_id, paper_id, next_viewed, next_liked, next_viewed, next_liked),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        return {
+            "paper_id": row["paper_id"],
+            "viewed": bool(row["viewed"]),
+            "liked": bool(row["liked"]),
+            "viewed_at": row["viewed_at"],
+            "liked_at": row["liked_at"],
+            "updated_at": row["updated_at"],
+        }
+
+    return _run_with_retry(operation, f"set_paper_mark:{user_id}:{paper_id}")
+
+
+def migrate_anonymous_data(user_id: str, anonymous_user_id: str | None, marks: dict[str, dict]) -> dict:
+    def operation() -> dict:
+        migrated_sessions = 0
+        migrated_marks = 0
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                if anonymous_user_id:
+                    cur.execute(
+                        """
+                        UPDATE chat_sessions
+                        SET account_user_id = %s
+                        WHERE user_id = %s AND account_user_id IS NULL
+                        """,
+                        (user_id, anonymous_user_id),
+                    )
+                    migrated_sessions = cur.rowcount
+
+                for paper_id, mark in marks.items():
+                    viewed = bool(mark.get("viewed"))
+                    liked = bool(mark.get("liked"))
+                    if liked:
+                        viewed = True
+                    if not viewed and not liked:
+                        continue
+                    cur.execute("SELECT 1 FROM papers WHERE id = %s", (paper_id,))
+                    if not cur.fetchone():
+                        continue
+                    cur.execute(
+                        """
+                        INSERT INTO paper_marks (
+                            user_id, paper_id, viewed, liked, viewed_at, liked_at, updated_at
+                        )
+                        VALUES (
+                            %s, %s, %s, %s,
+                            CASE WHEN %s THEN NOW() ELSE NULL END,
+                            CASE WHEN %s THEN NOW() ELSE NULL END,
+                            NOW()
+                        )
+                        ON CONFLICT (user_id, paper_id) DO UPDATE SET
+                            viewed = paper_marks.viewed OR EXCLUDED.viewed,
+                            liked = paper_marks.liked OR EXCLUDED.liked,
+                            viewed_at = CASE
+                                WHEN paper_marks.viewed OR EXCLUDED.viewed THEN COALESCE(paper_marks.viewed_at, NOW())
+                                ELSE NULL
+                            END,
+                            liked_at = CASE
+                                WHEN paper_marks.liked OR EXCLUDED.liked THEN COALESCE(paper_marks.liked_at, NOW())
+                                ELSE NULL
+                            END,
+                            updated_at = NOW()
+                        """,
+                        (user_id, paper_id, viewed, liked, viewed, liked),
+                    )
+                    migrated_marks += 1
+            conn.commit()
+        return {"sessions": migrated_sessions, "marks": migrated_marks}
+
+    return _run_with_retry(operation, f"migrate_anonymous_data:{user_id}")
+
+
 def get_chat_sessions(user_id: str, paper_id: str) -> list:
     if not DATABASE_URL:
         return []
@@ -239,7 +800,47 @@ def get_chat_sessions(user_id: str, paper_id: str) -> list:
     return _run_with_retry(operation, f"get_chat_sessions:{user_id}:{paper_id}")
 
 
-def create_chat_session(session_id: str, user_id: str, paper_id: str, title: str):
+def get_chat_sessions_for_account(account_user_id: str, paper_id: str) -> list:
+    if not DATABASE_URL:
+        return []
+
+    def operation() -> list:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT *
+                    FROM chat_sessions
+                    WHERE account_user_id = %s AND paper_id = %s
+                    ORDER BY created_at DESC
+                    """,
+                    (account_user_id, paper_id),
+                )
+                return [_normalize_session_row(row) for row in cur.fetchall()]
+
+    return _run_with_retry(operation, f"get_chat_sessions_for_account:{account_user_id}:{paper_id}")
+
+
+def get_chat_session(session_id: str) -> dict | None:
+    if not DATABASE_URL:
+        return None
+
+    def operation() -> dict | None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT * FROM chat_sessions WHERE id = %s", (session_id,))
+                return _normalize_session_row(cur.fetchone())
+
+    return _run_with_retry(operation, f"get_chat_session:{session_id}")
+
+
+def create_chat_session(
+    session_id: str,
+    user_id: str,
+    paper_id: str,
+    title: str,
+    account_user_id: str | None = None,
+):
     if not DATABASE_URL:
         return
 
@@ -248,11 +849,11 @@ def create_chat_session(session_id: str, user_id: str, paper_id: str, title: str
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    INSERT INTO chat_sessions (id, user_id, paper_id, title)
-                    VALUES (%s, %s, %s, %s)
+                    INSERT INTO chat_sessions (id, user_id, paper_id, title, account_user_id)
+                    VALUES (%s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO NOTHING
                     """,
-                    (session_id, user_id, paper_id, title),
+                    (session_id, user_id, paper_id, title, account_user_id),
                 )
             conn.commit()
 
@@ -671,3 +1272,141 @@ def get_unanalyzed_papers(limit: int = 10) -> list:
                 return cur.fetchall()
 
     return _run_with_retry(operation, f"get_unanalyzed_papers:{limit}")
+
+
+def record_presence(
+    client_id: str,
+    user_id: str | None,
+    user_agent: str | None,
+    ip_address: str | None,
+) -> None:
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO presence_heartbeats (
+                        client_id, user_id, user_agent, ip_address, last_seen_at
+                    )
+                    VALUES (%s, %s, %s, %s, NOW())
+                    ON CONFLICT (client_id) DO UPDATE SET
+                        user_id = EXCLUDED.user_id,
+                        user_agent = EXCLUDED.user_agent,
+                        ip_address = EXCLUDED.ip_address,
+                        last_seen_at = NOW()
+                    """,
+                    (client_id, user_id, user_agent, ip_address),
+                )
+            conn.commit()
+
+    _run_with_retry(operation, f"record_presence:{client_id}")
+
+
+def get_presence_counts(timeout_seconds: int) -> dict:
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
+
+    def operation() -> dict:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                      COUNT(*) AS total_count,
+                      COUNT(*) FILTER (WHERE user_id IS NOT NULL) AS authenticated_count,
+                      COUNT(*) FILTER (WHERE user_id IS NULL) AS guest_count
+                    FROM presence_heartbeats
+                    WHERE last_seen_at > %s
+                    """,
+                    (cutoff,),
+                )
+                row = cur.fetchone()
+        return {
+            "count": int(row["total_count"] or 0),
+            "authenticated_count": int(row["authenticated_count"] or 0),
+            "guest_count": int(row["guest_count"] or 0),
+        }
+
+    return _run_with_retry(operation, "get_presence_counts")
+
+
+def record_presence_snapshot(timeout_seconds: int, retention_days: int) -> dict:
+    cutoff = datetime.now(timezone.utc) - timedelta(seconds=timeout_seconds)
+    retention_cutoff = datetime.now(timezone.utc) - timedelta(days=retention_days)
+
+    def operation() -> dict:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                      date_trunc('minute', NOW()) AS bucket_at,
+                      COUNT(*) AS total_count,
+                      COUNT(*) FILTER (WHERE user_id IS NOT NULL) AS authenticated_count,
+                      COUNT(*) FILTER (WHERE user_id IS NULL) AS guest_count
+                    FROM presence_heartbeats
+                    WHERE last_seen_at > %s
+                    """,
+                    (cutoff,),
+                )
+                row = cur.fetchone()
+                cur.execute(
+                    """
+                    INSERT INTO presence_snapshots (
+                        bucket_at, total_count, authenticated_count, guest_count
+                    )
+                    VALUES (%s, %s, %s, %s)
+                    ON CONFLICT (bucket_at) DO UPDATE SET
+                        total_count = EXCLUDED.total_count,
+                        authenticated_count = EXCLUDED.authenticated_count,
+                        guest_count = EXCLUDED.guest_count
+                    """,
+                    (
+                        row["bucket_at"],
+                        int(row["total_count"] or 0),
+                        int(row["authenticated_count"] or 0),
+                        int(row["guest_count"] or 0),
+                    ),
+                )
+                cur.execute(
+                    "DELETE FROM presence_snapshots WHERE bucket_at < %s",
+                    (retention_cutoff,),
+                )
+            conn.commit()
+        return {
+            "bucket_at": row["bucket_at"],
+            "count": int(row["total_count"] or 0),
+            "authenticated_count": int(row["authenticated_count"] or 0),
+            "guest_count": int(row["guest_count"] or 0),
+        }
+
+    return _run_with_retry(operation, "record_presence_snapshot")
+
+
+def get_presence_trend(range_name: str) -> list[dict]:
+    hours = 24 if range_name == "24h" else 24 * 7
+    since = datetime.now(timezone.utc) - timedelta(hours=hours)
+
+    def operation() -> list[dict]:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT bucket_at, total_count, authenticated_count, guest_count
+                    FROM presence_snapshots
+                    WHERE bucket_at >= %s
+                    ORDER BY bucket_at
+                    """,
+                    (since,),
+                )
+                rows = cur.fetchall()
+        return [
+            {
+                "bucket_at": row["bucket_at"],
+                "count": int(row["total_count"] or 0),
+                "authenticated_count": int(row["authenticated_count"] or 0),
+                "guest_count": int(row["guest_count"] or 0),
+            }
+            for row in rows
+        ]
+
+    return _run_with_retry(operation, f"get_presence_trend:{range_name}")

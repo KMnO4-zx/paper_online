@@ -1,7 +1,7 @@
 from pathlib import Path
 import json
-import os
 import sys
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
 
@@ -9,7 +9,11 @@ import utils
 
 
 def test_cache_round_trip_uses_paper_id_and_metadata(tmp_path, monkeypatch):
-    monkeypatch.setenv("PAPER_CONTENT_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        utils,
+        "settings",
+        SimpleNamespace(paths=SimpleNamespace(paper_content_cache_dir=str(tmp_path))),
+    )
 
     paper_id = "paper/with:unsafe?chars"
     pdf_url = "https://example.com/paper.pdf"
@@ -32,7 +36,11 @@ def test_cache_round_trip_uses_paper_id_and_metadata(tmp_path, monkeypatch):
 
 
 def test_get_or_cache_paper_content_hits_reader_once(tmp_path, monkeypatch):
-    monkeypatch.setenv("PAPER_CONTENT_CACHE_DIR", str(tmp_path))
+    monkeypatch.setattr(
+        utils,
+        "settings",
+        SimpleNamespace(paths=SimpleNamespace(paper_content_cache_dir=str(tmp_path))),
+    )
 
     calls: list[str] = []
 

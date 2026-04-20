@@ -13,7 +13,8 @@ import {
 
 import { Button } from '@/components/ui/button';
 import { deleteChatSession, fetchChatMessages, fetchChatSessions, streamSse } from '@/lib/api';
-import { getUserId } from '@/lib/storage';
+import { useAuth } from '@/lib/auth';
+import { navigate } from '@/lib/router';
 import { RichContent } from '@/components/rich-content';
 import type { ChatMessage, ChatSessionSummary } from '@/types';
 
@@ -36,6 +37,7 @@ function toLocalMessages(messages: ChatMessage[]): LocalChatMessage[] {
 }
 
 export function ChatPanel({ paperId }: ChatPanelProps) {
+  const { user, isLoading: isAuthLoading } = useAuth();
   const [sessions, setSessions] = useState<ChatSessionSummary[]>([]);
   const [messages, setMessages] = useState<LocalChatMessage[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -65,11 +67,17 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
     setShowHistory(false);
     setDesktopHistoryMode('hidden');
 
+    if (isAuthLoading || !user) {
+      setSessions([]);
+      setIsLoadingSessions(false);
+      return;
+    }
+
     let active = true;
     const loadSessions = async () => {
       setIsLoadingSessions(true);
       try {
-        const nextSessions = await fetchChatSessions(paperId, getUserId());
+        const nextSessions = await fetchChatSessions(paperId);
         if (active) {
           setSessions(nextSessions);
         }
@@ -88,11 +96,15 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
     return () => {
       active = false;
     };
-  }, [paperId]);
+  }, [isAuthLoading, paperId, user]);
 
   const refreshSessions = async () => {
+    if (isAuthLoading || !user) {
+      setSessions([]);
+      return;
+    }
     try {
-      const nextSessions = await fetchChatSessions(paperId, getUserId());
+      const nextSessions = await fetchChatSessions(paperId);
       setSessions(nextSessions);
     } catch {
       setSessions([]);
@@ -178,6 +190,10 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
     if (!trimmed || isSending) {
       return;
     }
+    if (!user) {
+      navigate('/login');
+      return;
+    }
 
     const sessionId = currentSessionId ?? window.crypto.randomUUID();
     if (!currentSessionId) {
@@ -203,7 +219,6 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
       await sendStream(`/paper/${paperId}/chat`, {
         message: trimmed,
         session_id: sessionId,
-        user_id: getUserId(),
       }, assistantId);
       setLastUserMessage(trimmed);
       await refreshSessions();
@@ -224,6 +239,10 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
 
   const regenerate = async () => {
     if (!currentSessionId || !lastUserMessage || isSending) {
+      return;
+    }
+    if (!user) {
+      navigate('/login');
       return;
     }
 
@@ -248,7 +267,6 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
       await sendStream(`/paper/${paperId}/chat/regenerate`, {
         message: lastUserMessage,
         session_id: currentSessionId,
-        user_id: getUserId(),
       }, assistantId);
       await refreshSessions();
     } catch (error) {
@@ -265,6 +283,37 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
       setStreamingAssistantId(null);
     }
   };
+
+  if (isAuthLoading) {
+    return (
+      <section className="flex h-full min-h-[32rem] flex-col rounded-[28px] bg-white p-6 shadow-sm ring-1 ring-black/5">
+        <div className="flex items-center gap-2 text-sm text-[#728095]">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          加载账号状态...
+        </div>
+      </section>
+    );
+  }
+
+  if (!user) {
+    return (
+      <section className="flex h-full min-h-[32rem] flex-col rounded-[28px] bg-white p-6 shadow-sm ring-1 ring-black/5">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="h-4 w-4 text-[#ff9900]" />
+          <div className="text-sm font-semibold text-[#1e293b]">论文对话</div>
+        </div>
+        <div className="mt-6 rounded-2xl border border-dashed border-[#d8e0ea] bg-[#f8fafc] p-6 text-sm leading-6 text-[#728095]">
+          登录后可以与论文对话，并同步历史会话。
+        </div>
+        <Button
+          className="mt-4 w-fit rounded-full bg-gradient-to-r from-[#ff9900] to-[#ff7a00] text-white"
+          onClick={() => navigate('/login')}
+        >
+          登录后使用
+        </Button>
+      </section>
+    );
+  }
 
   return (
     <section className="flex h-full min-h-[32rem] max-h-[calc(100vh-10rem)] flex-col overflow-hidden rounded-[28px] bg-white shadow-sm ring-1 ring-black/5 lg:min-h-[36rem] xl:max-h-none">

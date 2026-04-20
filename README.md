@@ -11,13 +11,13 @@ English | [简体中文](./README_zh.md)
 
 &emsp;&emsp;Paper Insight is an online paper analysis tool built with FastAPI and PostgreSQL, leveraging LLM technology to provide fast paper analysis and interactive chat, helping researchers quickly understand and screen academic papers.
 
-&emsp;&emsp;This project aims to assist in quickly browsing AI conference papers. Through AI-generated summaries, users can decide whether to save papers to Zotero for in-depth reading. Currently supports papers from the OpenReview platform only, as part of the author's personal paper reading workflow, with no plans to support other platforms.
+&emsp;&emsp;This project aims to assist in quickly browsing AI conference papers. Through AI-generated summaries, users can decide whether to save papers to Zotero for in-depth reading. Current data mainly comes from the supported conference import pipeline, and the UI is being kept platform-neutral so more paper sources can be introduced later.
 
 ***&emsp;&emsp;Visit https://paper-online.onrender.com for online experience, or follow the steps below for local deployment.***
 
 &emsp;&emsp;Supported conferences: [ICLR 2026](https://paper-online.onrender.com/conference/iclr_2026), [NeurIPS 2025](https://paper-online.onrender.com/conference/neurips_2025), [ICML 2025](https://paper-online.onrender.com/conference/icml_2025)
 
-> *Note: The default LLM provider is OpenRouter, currently using `stepfun/step-3.5-flash:free`. More conferences will be supported with unified format.*
+> *Note: the runtime default currently uses `StepLLM` and reads credentials from `config.yaml`. If you change LLM providers, check `backend/app.py` and `backend/llm.py` first.*
 
 ### 🤔 Why not [cool papers](https://papers.cool/)?
 
@@ -29,7 +29,7 @@ English | [简体中文](./README_zh.md)
 | **Analysis Questions** | 4 core questions | 6 detailed questions |
 | **Core Questions** | • Is code open-sourced?<br>• What task does it solve?<br>• What evaluation metrics?<br>• Why better than baseline? | • What problem to solve?<br>• Related research?<br>• How to solve it?<br>• What experiments?<br>• Further exploration?<br>• Summary |
 | **Use Case** | Quickly judge paper value, decide whether to read in-depth | Comprehensively understand paper details and research context |
-| **Extra Features** | • Conference paper browsing<br>• Field-filtered search<br>• Paper chat | • Detailed paper interpretation<br>• Complete research background |
+| **Extra Features** | • Conference paper browsing<br>• Field-filtered search<br>• Paper chat<br>• User paper history | • Detailed paper interpretation<br>• Complete research background |
 
 &emsp;&emsp;**In short**: Paper Insight focuses on "quick screening" to help you find papers worth reading in-depth from a large volume; cool papers focuses on "deep understanding" to help you comprehensively grasp all aspects of a paper. They complement each other—choose based on your needs.
 
@@ -54,8 +54,20 @@ English | [简体中文](./README_zh.md)
 - **Chat History**: Automatically save chat history, view anytime
 - **Regenerate**: Support regenerating the last reply
 
+### 👤 Account & Personal Library
+- **Email Accounts**: Register and log in with email/password; sessions are stored in HTTP-only cookies
+- **Database-backed Marks**: Viewed and liked paper states are stored in PostgreSQL for future recommendation systems
+- **My Papers Page**: View papers you have read or liked, with filters and sorting by viewed time, liked time, recent activity, or title
+- **Authenticated Chat Ownership**: Paper chat history is bound to the logged-in account
+
+### 🛠️ Admin Dashboard
+- **Online Metrics**: Display current online users and historical trends
+- **User Management**: List users, enable/disable accounts, and reset user passwords
+- **Admin Password**: Change the current administrator password from the dashboard
+
 ### 🔧 Other Features
 - **Online Users**: Real-time display of current online user count
+- **Centralized Config**: Runtime configuration is read from `config.yaml`; `config.yaml.example` is committed as the template
 - **Batch Import**: Support batch importing conference papers from JSONL files
 - **Responsive Design**: Support desktop and mobile access
 
@@ -86,22 +98,35 @@ brew services start postgresql@16
 createdb paper_online
 ```
 
-### 3. Configure Environment Variables
+### 3. Configure `config.yaml`
 
-Create a `.env` file in the `backend/` directory with the following content:
+Copy the example config and fill in local values. `config.yaml` is gitignored and must not be committed.
 
 ```bash
-DATABASE_URL=postgresql:///paper_online
-OPEN_ROUTER_API_KEY=your_api_key_here
+cp config.yaml.example config.yaml
 ```
 
-If you want to switch providers manually, you can also configure optional keys such as `SILICONFLOW_API_KEY`, but the current default runtime uses `OPEN_ROUTER_API_KEY`.
+At minimum, verify:
+
+```yaml
+database:
+  url: postgresql:///paper_online
+
+llm:
+  step_api_key: your_api_key_here
+
+admin:
+  email: admin@example.com
+  initial_password: change-this-admin-password
+```
 
 Initialize the database schema:
 
 ```bash
 uv run python scripts/apply_migrations.py
 ```
+
+The backend also applies SQL migrations automatically on startup, but running the script explicitly is useful when preparing a fresh local database.
 
 For a minimal local dataset:
 
@@ -136,6 +161,9 @@ Recommended routes:
 - Global search: `http://127.0.0.1:5173/search?q=agent`
 - Conference page: `http://127.0.0.1:5173/conference/iclr_2026`
 - Paper detail: `http://127.0.0.1:5173/papers/uq6UWRgzMr`
+- Login / register: `http://127.0.0.1:5173/login`, `http://127.0.0.1:5173/register`
+- My papers: `http://127.0.0.1:5173/me`
+- Admin dashboard: `http://127.0.0.1:5173/admin`
 
 Search is triggered by clicking the search button or pressing `Shift+Enter`.
 Legacy query-style URLs such as `/?id=...`, `/?conference=...`, and `/?search=...` are no longer supported.
@@ -181,7 +209,7 @@ Use `paper_online` as the default local database name:
 createdb paper_online
 
 # Initialize tables, indexes, and search functions
-DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py
+uv run python scripts/apply_migrations.py
 ```
 
 If you want to reset everything:
@@ -189,7 +217,7 @@ If you want to reset everything:
 ```bash
 dropdb --if-exists paper_online
 createdb paper_online
-DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py
+uv run python scripts/apply_migrations.py
 ```
 
 ### 3. Two ways to prepare local data
@@ -199,7 +227,7 @@ DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.p
 Good for booting the UI quickly and validating APIs without full production data.
 
 ```bash
-DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py --seed dev
+uv run python scripts/apply_migrations.py --seed dev
 ```
 
 #### Option B: rebuild from `crawled_data/`
@@ -209,7 +237,7 @@ Use this if you do not want to depend on the online dump, or if you want to rebu
 First initialize the database:
 
 ```bash
-DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py
+uv run python scripts/apply_migrations.py
 ```
 
 Then import by conference:
@@ -255,9 +283,9 @@ For a new contributor, this is the shortest path:
 ```bash
 brew services start postgresql@16
 createdb paper_online
-cp backend/.env.example backend/.env
-# edit backend/.env and fill OPEN_ROUTER_API_KEY
-DATABASE_URL=postgresql:///paper_online uv run python scripts/apply_migrations.py --seed dev
+cp config.yaml.example config.yaml
+# edit config.yaml and fill database.url, LLM key, and initial admin
+uv run python scripts/apply_migrations.py --seed dev
 cd backend && uv run uvicorn app:app --reload --host 127.0.0.1 --port 8000
 cd frontend-react && npm run dev
 ```
@@ -306,12 +334,15 @@ If `frontend-react/dist` does not exist, FastAPI now returns a clear error telli
 This repository includes a production-ready [Dockerfile](./Dockerfile).
 It builds `frontend-react`, copies `frontend-react/dist` into the final image, applies PostgreSQL migrations on startup, and launches FastAPI.
 
-For VPS deployment, prefer `docker compose`:
+For VPS deployment, start Docker Compose from `config.yaml`:
 
 ```bash
-cp .env.example .env
-# POSTGRES_PASSWORD is required. Fill it in together with OPEN_ROUTER_API_KEY and any optional LLM keys.
-docker compose up --build -d
+cp config.yaml.example config.yaml
+# edit config.yaml:
+# - set server.host to 0.0.0.0
+# - set database.url to postgresql://paper:<password>@postgres:5432/paper_online
+# - fill LLM keys and initial admin
+uv run python scripts/docker_compose.py up --build -d
 ```
 
 If you only need the application image:
@@ -320,7 +351,7 @@ If you only need the application image:
 docker build -t paper-insight .
 ```
 
-At runtime, the app expects a valid `DATABASE_URL`. On VPS, the included `docker-compose.yml` wires the app to a PostgreSQL 16 container automatically.
+At runtime, the app reads `/app/config.yaml` mounted by Compose.
 The Compose setup also persists `/app/data`, so `data/paper_cache/` survives container recreation.
 
 ## Project Structure
@@ -329,9 +360,12 @@ The Compose setup also persists `/app/data`, so `data/paper_cache/` survives con
 paper_online/
 ├── backend/
 │   ├── app.py          # FastAPI main application
+│   ├── auth.py         # Password hashing and session token helpers
 │   ├── chat.py         # Chat session management
+│   ├── config.py       # config.yaml loader
 │   ├── database.py     # PostgreSQL database operations
 │   ├── llm.py          # LLM API wrapper
+│   ├── migrations.py   # SQL migration runner
 │   ├── prompt.py       # System prompts
 │   └── utils.py        # Utility functions
 ├── db/
@@ -343,8 +377,10 @@ paper_online/
 │   └── vite.config.ts  # Vite config
 ├── scripts/
 │   ├── apply_migrations.py # Apply migrations / optional seed
+│   ├── docker_compose.py   # Start Docker Compose from config.yaml
 │   ├── import_papers.py    # Batch import papers
 │   └── migrate_db.sql      # Single-file database migration
+├── config.yaml.example   # Runtime config template
 └── crawled_data/         # Crawler data storage
     ├── neurips_2025/
     └── iclr_2026/

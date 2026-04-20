@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
 import json
-import os
 import re
 import sys
 from pathlib import Path
 
 import psycopg
-from dotenv import load_dotenv
 from psycopg.types.json import Jsonb
 
-# Load environment variables from backend/.env first, then project root .env.
 repo_root = Path(__file__).parent.parent
-load_dotenv(repo_root / "backend" / ".env")
-load_dotenv(repo_root / ".env")
+sys.path.insert(0, str(repo_root / "backend"))
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+from config import settings
+
+DATABASE_URL = settings.database.url
 OPENREVIEW_URL_PATTERN = re.compile(r"^https://openreview\.net/(?:attachment|pdf)\?")
 
 
@@ -35,7 +33,7 @@ def _normalize_pdf_url(paper_id: str, pdf_url: str | None) -> str | None:
 def import_conference(conference_name: str):
     """Import papers from a conference directory."""
     if not DATABASE_URL:
-        print("Error: DATABASE_URL not found in environment variables")
+        print("Error: database.url not found in config.yaml")
         sys.exit(1)
 
     data_dir = repo_root / "crawled_data" / conference_name

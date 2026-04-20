@@ -7,6 +7,7 @@ import tiktoken
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from config import settings
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -59,7 +60,11 @@ def normalize_paper_pdf_url(paper_id: str, pdf_url: str | None) -> str | None:
 
 
 def _get_paper_cache_dir() -> Path:
-    return Path(os.getenv("PAPER_CONTENT_CACHE_DIR", str(DEFAULT_PAPER_CACHE_DIR)))
+    configured_dir = settings.paths.paper_content_cache_dir
+    if configured_dir:
+        configured_path = Path(configured_dir)
+        return configured_path if configured_path.is_absolute() else Path(__file__).resolve().parent.parent / configured_path
+    return DEFAULT_PAPER_CACHE_DIR
 
 
 def _get_paper_cache_paths(paper_id: str) -> tuple[Path, Path]:

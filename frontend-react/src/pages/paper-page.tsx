@@ -5,10 +5,10 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ChatPanel } from '@/components/chat-panel';
 import { RichContent } from '@/components/rich-content';
-import { fetchPaperInfo, streamSse } from '@/lib/api';
+import { fetchPaperInfo, fetchPaperMarks, streamSse, updatePaperMark } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { getVenueParts, normalizeKeywords } from '@/lib/content';
 import { navigate } from '@/lib/router';
-import { getPaperMarks, setPaperMark } from '@/lib/storage';
 import type { Paper } from '@/types';
 
 interface PaperPageProps {
@@ -19,6 +19,7 @@ const BACK_BUTTON_FADE_DISTANCE = 72;
 const BACK_BUTTON_MAX_TRANSLATE_Y = 8;
 
 export function PaperPage({ paperId }: PaperPageProps) {
+  const { user, isLoading: isAuthLoading } = useAuth();
   const [paper, setPaper] = useState<Paper | null>(null);
   const [paperError, setPaperError] = useState<string | null>(null);
   const [paperLoading, setPaperLoading] = useState(true);
@@ -27,15 +28,35 @@ export function PaperPage({ paperId }: PaperPageProps) {
   const [analysisLoading, setAnalysisLoading] = useState(true);
   const [analysisStreaming, setAnalysisStreaming] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [marks, setMarks] = useState(() => getPaperMarks(paperId));
+  const [marks, setMarks] = useState({ viewed: false, liked: false });
   const [isLikeAnimating, setIsLikeAnimating] = useState(false);
   const [backButtonProgress, setBackButtonProgress] = useState(0);
   const analysisRequestIdRef = useRef(0);
   const analysisAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    setMarks(getPaperMarks(paperId));
-  }, [paperId]);
+    let active = true;
+    setMarks({ viewed: false, liked: false });
+    if (isAuthLoading || !user) {
+      return () => {
+        active = false;
+      };
+    }
+    void fetchPaperMarks([paperId])
+      .then((nextMarks) => {
+        if (active) {
+          setMarks(nextMarks[paperId] ?? { viewed: false, liked: false });
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setMarks({ viewed: false, liked: false });
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [isAuthLoading, paperId, user]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -160,6 +181,16 @@ export function PaperPage({ paperId }: PaperPageProps) {
   const kimiUrl = `https://www.kimi.com/?prefill_prompt=${encodeURIComponent(kimiPrefillPrompt)}&send_immediately=true`;
   const isBackButtonHidden = backButtonProgress >= 1;
   const backButtonOpacity = 1 - backButtonProgress;
+  const requireLogin = () => {
+    if (isAuthLoading) {
+      return false;
+    }
+    if (!user) {
+      navigate('/login');
+      return false;
+    }
+    return true;
+  };
 
   return (
     <div className="mx-auto max-w-[96rem] animate-fade-in">
@@ -257,7 +288,12 @@ export function PaperPage({ paperId }: PaperPageProps) {
                         ? 'border-[#bfdbfe] bg-[#eff6ff] text-[#2563eb]'
                         : 'border-[#dbe2ea] text-[#66768b]'
                     }`}
-                    onClick={() => setMarks(setPaperMark(paperId, 'viewed', !marks.viewed))}
+                    onClick={() => {
+                      if (!requireLogin()) {
+                        return;
+                      }
+                      void updatePaperMark(paperId, { viewed: !marks.viewed }).then(setMarks);
+                    }}
                   >
                     <Eye className={`mr-1.5 h-4 w-4 ${marks.viewed ? 'fill-current' : ''}`} />
                     {marks.viewed ? '已看过' : '看过'}
@@ -270,8 +306,11 @@ export function PaperPage({ paperId }: PaperPageProps) {
                         : 'border-[#dbe2ea] text-[#66768b]'
                     }`}
                     onClick={() => {
+                      if (!requireLogin()) {
+                        return;
+                      }
                       setIsLikeAnimating(true);
-                      setMarks(setPaperMark(paperId, 'liked', !marks.liked));
+                      void updatePaperMark(paperId, { liked: !marks.liked }).then(setMarks);
                       window.setTimeout(() => setIsLikeAnimating(false), 400);
                     }}
                   >

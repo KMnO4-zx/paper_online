@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [[ -z "${DATABASE_URL:-}" ]]; then
-  echo "Error: DATABASE_URL is not set." >&2
+DATABASE_URL="$(python scripts/config_value.py database.url)"
+if [[ -z "${DATABASE_URL}" ]]; then
+  echo "Error: database.url is not set in config.yaml." >&2
   exit 1
 fi
 

@@ -17,8 +17,8 @@ COPY ./ /app
 COPY --from=frontend-builder /app/frontend-react/dist /app/frontend-react/dist
 
 # 安装依赖
-RUN pip install --no-cache-dir fastapi uvicorn openai 'psycopg[binary]' python-dotenv requests sse-starlette tiktoken
+RUN pip install --no-cache-dir fastapi uvicorn openai 'psycopg[binary]' requests sse-starlette tiktoken pyyaml argon2-cffi
 
-# 在 backend 目录下启动，使用 $PORT 环境变量
+# 在 backend 目录下启动，端口等配置来自 /app/config.yaml
 WORKDIR /app/backend
-CMD python /app/scripts/apply_migrations.py && uvicorn app:app --host 0.0.0.0 --port ${PORT:-8000}
+CMD python /app/scripts/apply_migrations.py && python /app/scripts/run_server.py

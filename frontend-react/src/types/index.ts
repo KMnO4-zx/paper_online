@@ -61,9 +61,72 @@ export interface ChatSessionSummary {
 
 export interface OnlineCount {
   count: number;
+  authenticated_count?: number;
+  guest_count?: number;
 }
 
 export interface PaperMark {
   viewed: boolean;
   liked: boolean;
+  viewed_at?: string | null;
+  liked_at?: string | null;
+  updated_at?: string | null;
+}
+
+export type MyPaperFilter = 'all' | 'viewed' | 'liked';
+export type MyPaperSort = 'viewed_at' | 'liked_at' | 'liked_first' | 'updated_at' | 'title';
+
+export interface MarkedPaperItem {
+  paper: Paper;
+  mark: PaperMark;
+}
+
+export interface MarkedPaperListResponse {
+  items: MarkedPaperItem[];
+  total: number;
+  page: number;
+  pages: number;
+}
+
+export interface AuthUser {
+  id: string;
+  email: string;
+  role: 'user' | 'admin';
+  is_active: boolean;
+  email_verified: boolean;
+  created_at?: string;
+  last_login_at?: string | null;
+}
+
+export interface AuthResponse {
+  user: AuthUser;
+}
+
+export interface AdminUser {
+  id: string;
+  email: string;
+  role: 'user' | 'admin';
+  is_active: boolean;
+  email_verified: boolean;
+  created_at: string;
+  last_login_at?: string | null;
+}
+
+export interface AdminUserListResponse {
+  users: AdminUser[];
+  total: number;
+  page: number;
+  pages: number;
+}
+
+export interface OnlineTrendPoint {
+  bucket_at: string;
+  count: number;
+  authenticated_count: number;
+  guest_count: number;
+}
+
+export interface AdminOnlineMetrics {
+  current: OnlineCount;
+  trend: OnlineTrendPoint[];
 }

@@ -23,19 +23,11 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-    environment:
-      PORT: ${PORT:-8000}
-      DATABASE_URL: postgresql://${POSTGRES_USER:-paper}:${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}@postgres:5432/${POSTGRES_DB:-paper_online}
-      OPEN_ROUTER_API_KEY: ${OPEN_ROUTER_API_KEY:-}
-      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
-      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-      STEP_API_KEY: ${STEP_API_KEY:-}
-      STEP_BASE_URL: ${STEP_BASE_URL:-}
-      ARKPLAN_API_KEY: ${ARKPLAN_API_KEY:-}
     ports:
       - "${PORT:-8000}:8000"
     volumes:
       - app_data:/app/data
+      - ./config.yaml:/app/config.yaml:ro
 
 volumes:
   postgres_data:
