@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, RefreshCcw, Shield, Users } from 'lucide-react';
+import { Loader2, RefreshCcw, Shield, Trash2, Users } from 'lucide-react';
 import {
   CartesianGrid,
   Line,
@@ -13,7 +13,19 @@ import {
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
+import {
   changePassword,
+  deleteAdminUser,
   fetchAdminOnlineMetrics,
   fetchAdminUsers,
   resetAdminUserPassword,
@@ -94,8 +106,13 @@ export function AdminPage() {
   };
 
   const toggleUserActive = async (target: AdminUser) => {
-    await updateAdminUser(target.id, { is_active: !target.is_active });
-    await load();
+    setError(null);
+    try {
+      await updateAdminUser(target.id, { is_active: !target.is_active });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新用户状态失败');
+    }
   };
 
   const resetPassword = async (target: AdminUser) => {
@@ -103,8 +120,23 @@ export function AdminPage() {
     if (!nextPassword) {
       return;
     }
-    await resetAdminUserPassword(target.id, nextPassword);
-    await load();
+    setError(null);
+    try {
+      await resetAdminUserPassword(target.id, nextPassword);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '重置密码失败');
+    }
+  };
+
+  const deleteUser = async (target: AdminUser) => {
+    setError(null);
+    try {
+      await deleteAdminUser(target.id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除用户失败');
+    }
   };
 
   return (
@@ -193,7 +225,7 @@ export function AdminPage() {
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[760px] text-left text-sm">
+          <table className="w-full min-w-[860px] text-left text-sm">
             <thead className="border-b border-[#eef2f7] text-[#728095]">
               <tr>
                 <th className="py-3">邮箱</th>
@@ -212,13 +244,46 @@ export function AdminPage() {
                   <td>{target.is_active ? '启用' : '停用'}</td>
                   <td>{new Date(target.created_at).toLocaleDateString()}</td>
                   <td>{target.last_login_at ? new Date(target.last_login_at).toLocaleString() : '-'}</td>
-                  <td className="space-x-2 text-right">
-                    <Button variant="outline" size="sm" className="rounded-full" onClick={() => void toggleUserActive(target)}>
-                      {target.is_active ? '停用' : '启用'}
-                    </Button>
-                    <Button variant="outline" size="sm" className="rounded-full" onClick={() => void resetPassword(target)}>
-                      重置密码
-                    </Button>
+                  <td className="text-right">
+                    <div className="flex justify-end gap-2">
+                      <Button variant="outline" size="sm" className="rounded-full" onClick={() => void toggleUserActive(target)}>
+                        {target.is_active ? '停用' : '启用'}
+                      </Button>
+                      <Button variant="outline" size="sm" className="rounded-full" onClick={() => void resetPassword(target)}>
+                        重置密码
+                      </Button>
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-full border-[#fecdd3] bg-[#fff1f2] text-[#be123c] hover:border-[#fda4af] hover:bg-[#ffe4e6] hover:text-[#9f1239]"
+                            disabled={target.id === user?.id}
+                            title={target.id === user?.id ? '不能删除当前登录管理员' : undefined}
+                          >
+                            <Trash2 className="mr-1 h-4 w-4" />
+                            删除
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>确认删除用户？</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              将删除 {target.email} 的账号、登录会话、论文标记和已归属的聊天记录。此操作无法撤销。
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel className="rounded-full">取消</AlertDialogCancel>
+                            <AlertDialogAction
+                              className="rounded-full bg-[#e11d48] text-white hover:bg-[#be123c]"
+                              onClick={() => void deleteUser(target)}
+                            >
+                              确认删除
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    </div>
                   </td>
                 </tr>
               ))}

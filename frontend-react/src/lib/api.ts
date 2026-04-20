@@ -14,7 +14,12 @@ import type {
   SearchFilters,
 } from '@/types';
 
-const API_BASE = import.meta.env.DEV ? 'http://127.0.0.1:8000' : '';
+const DEV_API_BASE =
+  typeof window === 'undefined'
+    ? 'http://127.0.0.1:8000'
+    : `${window.location.protocol}//${window.location.hostname}:8000`;
+
+const API_BASE = import.meta.env.DEV ? DEV_API_BASE : '';
 
 interface StreamOptions {
   onChunk?: (chunk: string) => void;
@@ -230,6 +235,10 @@ export async function resetAdminUserPassword(userId: string, password: string): 
     method: 'POST',
     body: JSON.stringify({ password }),
   });
+}
+
+export async function deleteAdminUser(userId: string): Promise<void> {
+  await apiFetch<{ ok: boolean }>(`/admin/users/${userId}`, { method: 'DELETE' });
 }
 
 function dispatchEvent(block: string, handlers: StreamOptions): void {

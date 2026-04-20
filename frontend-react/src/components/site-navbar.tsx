@@ -94,12 +94,11 @@ export function SiteNavbar() {
           </div>
         </button>
 
-        <div className="hidden items-center gap-2 rounded-full bg-white/80 px-4 py-2 text-sm text-[#586578] shadow-sm ring-1 ring-black/5 md:flex">
-          <Radio className="h-4 w-4 text-[#16a34a]" />
-          <span>{onlineCount} 人在线</span>
-        </div>
-
         <div className="flex items-center gap-2">
+          <div className="hidden shrink-0 items-center gap-2 rounded-full bg-white/80 px-4 py-2 text-sm text-[#586578] shadow-sm ring-1 ring-black/5 md:flex">
+            <Radio className="h-4 w-4 text-[#16a34a]" />
+            <span>{onlineCount} 人在线</span>
+          </div>
           {user ? (
             <>
               <Button

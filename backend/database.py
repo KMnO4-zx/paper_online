@@ -527,6 +527,21 @@ def update_user_admin_fields(
     return _run_with_retry(operation, f"update_user_admin_fields:{user_id}")
 
 
+def delete_user(user_id: str) -> bool:
+    def operation() -> bool:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM users WHERE id = %s RETURNING id",
+                    (user_id,),
+                )
+                deleted = cur.fetchone() is not None
+            conn.commit()
+        return deleted
+
+    return _run_with_retry(operation, f"delete_user:{user_id}")
+
+
 def get_paper_marks(user_id: str, paper_ids: list[str]) -> dict[str, dict]:
     if not paper_ids:
         return {}

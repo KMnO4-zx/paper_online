@@ -32,6 +32,7 @@ from database import (
     create_user,
     create_user_session,
     delete_chat_session,
+    delete_user,
     delete_last_chat_message_pair,
     ensure_admin_user,
     get_chat_messages,
@@ -538,6 +539,26 @@ async def admin_reset_user_password(
             raise HTTPException(status_code=404, detail="用户不存在")
         update_user_password(user_id, hash_password(req.password))
         revoke_user_sessions(user_id)
+        return {"ok": True}
+    except DatabaseError as exc:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+
+
+@app.delete("/admin/users/{user_id}")
+async def admin_delete_user(
+    user_id: str,
+    admin: dict = Depends(require_admin_user),
+):
+    if user_id == admin["id"]:
+        raise HTTPException(status_code=400, detail="不能删除当前登录管理员")
+    try:
+        target = get_user_by_id(user_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="用户不存在")
+        if target["role"] == "admin" and target["is_active"] and count_active_admins() <= 1:
+            raise HTTPException(status_code=400, detail="不能删除最后一个管理员")
+        if not delete_user(user_id):
+            raise HTTPException(status_code=404, detail="用户不存在")
         return {"ok": True}
     except DatabaseError as exc:
         raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
