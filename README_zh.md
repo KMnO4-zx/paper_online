@@ -19,6 +19,8 @@
 
 &emsp;&emsp;已支持：[ICLR 2026](https://paper-online.onrender.com/conference/iclr_2026), [NeurIPS 2025](https://paper-online.onrender.com/conference/neurips_2025), [ICML 2025](https://paper-online.onrender.com/conference/icml_2025)
 
+&emsp;&emsp;额外论文来源：[Hugging Face Daily Papers](https://paper-online.onrender.com/hf-daily)。系统可以定时抓取 Hugging Face Daily Papers，按点赞数选择热门论文入库、自动去重，并进入 AI 分析队列。
+
 > *注：当前运行时代码默认使用 `StepLLM`，凭据从 `config.yaml` 读取。如果要切换 LLM 提供商，请优先查看 `backend/app.py` 和 `backend/llm.py`。*
 
 ### 🤔 为什么不用 [cool papers](https://papers.cool/)？
@@ -50,6 +52,13 @@
 - **快捷键**：Shift+Enter 快速搜索
 - **智能缓存**：24小时缓存，二次访问秒开
 
+### 🤗 Hugging Face Daily Papers
+- **定时抓取**：每天在配置的本地时间抓取 `https://huggingface.co/api/daily_papers`
+- **热门论文入库**：默认按 Hugging Face 点赞数选 Top 5 入库
+- **自动去重**：使用 Hugging Face / arXiv 论文 ID 作为稳定来源 ID，避免重复论文记录
+- **自动分析**：新入库论文在 LLM 已配置时会进入 AI 分析队列
+- **按日展示**：Daily Papers 按入库日期倒序展示，同一天内按点赞数 / rank 排序
+
 ### 💬 论文对话
 - **智能问答**：基于论文内容进行多轮对话
 - **上下文记忆**：保持对话上下文，理解连续提问
@@ -58,14 +67,17 @@
 
 ### 👤 账号与个人论文库
 - **邮箱账号**：支持邮箱密码注册 / 登录，登录态使用 HTTP-only Cookie 保存
+- **邀请码注册**：新用户注册需要管理员生成的邀请码
 - **数据库行为记录**：看过、点赞状态写入 PostgreSQL，便于后续推荐系统使用
 - **我的论文**：展示用户看过 / 点赞过的论文，支持按最近看过、最近点赞、最近操作、收藏优先、标题排序
 - **聊天归属**：论文对话历史绑定到登录账号
 
 ### 🛠️ 管理员后台
 - **在线指标**：展示当前在线人数和历史在线趋势
-- **用户管理**：查看用户列表、启用 / 停用账号、重置用户密码
+- **用户管理**：查看用户列表、启用 / 停用账号、重置用户密码，并支持二次确认后删除用户
+- **邀请码管理**：生成可设置使用次数的邀请码，后续仍可查看完整邀请码，也可删除邀请码
 - **管理员密码**：支持在后台修改当前管理员密码
+- **HF Daily 同步**：支持在后台手动触发 Hugging Face Daily Papers 同步
 
 ### 🔧 其他功能
 - **在线人数**：实时显示当前在线用户数
@@ -120,6 +132,16 @@ llm:
 admin:
   email: admin@example.com
   initial_password: change-this-admin-password
+
+auth:
+  public_registration_enabled: true
+
+hf_daily:
+  enabled: true
+  api_url: https://huggingface.co/api/daily_papers
+  fetch_time: "22:00"
+  timezone: Asia/Shanghai
+  top_n: 5
 ```
 
 初始化数据库结构：
@@ -162,6 +184,7 @@ npm run dev
 - 首页：`http://127.0.0.1:5173/`
 - 全局搜索：`http://127.0.0.1:5173/search?q=agent`
 - 会议页：`http://127.0.0.1:5173/conference/iclr_2026`
+- Hugging Face Daily Papers：`http://127.0.0.1:5173/hf-daily`
 - 论文详情页：`http://127.0.0.1:5173/papers/uq6UWRgzMr`
 - 登录 / 注册：`http://127.0.0.1:5173/login`、`http://127.0.0.1:5173/register`
 - 我的论文：`http://127.0.0.1:5173/me`
@@ -280,7 +303,34 @@ data/paper_cache/
 rm -rf data/paper_cache
 ```
 
-### 5. 推荐的本地开发顺序
+### 5. Hugging Face Daily Papers
+
+默认配置会启用每日同步：
+
+```yaml
+hf_daily:
+  enabled: true
+  api_url: https://huggingface.co/api/daily_papers
+  fetch_time: "22:00"
+  timezone: Asia/Shanghai
+  top_n: 5
+```
+
+当前行为：
+
+- 定时任务运行在 FastAPI 进程内。
+- 每个配置日期抓取一次 Hugging Face Daily Papers API。
+- 点赞数最高的论文会写入 `papers`，来源元数据写入 `hf_daily_papers`。
+- 新论文在 AI 分析完成前保持 `llm_response IS NULL`。
+- 管理员后台也提供手动同步按钮。
+
+如果需要在本地回填指定日期，可在 `backend/` 下执行：
+
+```bash
+uv run python -c "from datetime import date; from config import settings; from hf_daily import sync_hf_daily_papers; print(sync_hf_daily_papers(settings.hf_daily.api_url, settings.hf_daily.top_n, date(2026, 4, 20)))"
+```
+
+### 6. 推荐的本地开发顺序
 
 如果你是新贡献者，最省心的顺序是：
 
@@ -372,6 +422,7 @@ paper_online/
 │   ├── chat.py         # 聊天会话管理
 │   ├── config.py       # config.yaml 读取逻辑
 │   ├── database.py     # PostgreSQL 数据库操作
+│   ├── hf_daily.py     # Hugging Face Daily Papers 同步逻辑
 │   ├── llm.py          # LLM 调用封装
 │   ├── migrations.py   # SQL migration 执行器
 │   ├── prompt.py       # 系统提示词
@@ -391,7 +442,8 @@ paper_online/
 ├── config.yaml.example   # 运行时配置模板
 └── crawled_data/         # 爬虫数据存储
     ├── neurips_2025/
-    └── iclr_2026/
+    ├── iclr_2026/
+    └── icml_2025/
 ```
 
 ## 📦 批量导入论文
