@@ -1,6 +1,7 @@
 import type {
   AdminInvitationCodeCreateResponse,
   AdminInvitationCodeListResponse,
+  AdminInvitationCode,
   AdminOnlineMetrics,
   AdminUserListResponse,
   AuthResponse,
@@ -245,6 +246,16 @@ export async function createAdminInvitationCode(
 ): Promise<AdminInvitationCodeCreateResponse> {
   return apiFetch<AdminInvitationCodeCreateResponse>('/admin/invitation-codes', {
     method: 'POST',
+    body: JSON.stringify({ max_uses: maxUses }),
+  });
+}
+
+export async function updateAdminInvitationCodeMaxUses(
+  codeId: string,
+  maxUses: number,
+): Promise<AdminInvitationCode> {
+  return apiFetch<AdminInvitationCode>(`/admin/invitation-codes/${codeId}`, {
+    method: 'PATCH',
     body: JSON.stringify({ max_uses: maxUses }),
   });
 }

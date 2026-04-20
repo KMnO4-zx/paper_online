@@ -66,6 +66,7 @@ from database import (
     search_all_papers,
     set_paper_mark,
     update_llm_response,
+    update_invitation_code_max_uses,
     update_user_admin_fields,
     update_user_last_login,
     update_user_password,
@@ -319,6 +320,10 @@ class ResetPasswordRequest(BaseModel):
 
 class InvitationCodeCreateRequest(BaseModel):
     max_uses: int = 1
+
+
+class InvitationCodeUpdateRequest(BaseModel):
+    max_uses: int
 
 
 def public_user(user: dict) -> dict:
@@ -685,6 +690,25 @@ async def admin_create_invitation_code(
             admin["id"],
         )
         return {"code": code, "invitation": invitation}
+    except DatabaseError as exc:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+
+
+@app.patch("/admin/invitation-codes/{code_id}")
+async def admin_update_invitation_code(
+    code_id: str,
+    req: InvitationCodeUpdateRequest,
+    admin: dict = Depends(require_admin_user),
+):
+    if req.max_uses < 1 or req.max_uses > 10000:
+        raise HTTPException(status_code=400, detail="可使用次数必须在 1 到 10000 之间")
+    try:
+        invitation, error = update_invitation_code_max_uses(code_id, req.max_uses)
+        if error == "not_found":
+            raise HTTPException(status_code=404, detail="邀请码不存在")
+        if error == "below_used_count":
+            raise HTTPException(status_code=400, detail="可使用次数不能小于已使用次数")
+        return invitation
     except DatabaseError as exc:
         raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
 

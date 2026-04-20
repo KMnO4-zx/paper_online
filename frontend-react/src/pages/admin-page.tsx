@@ -33,6 +33,7 @@ import {
   fetchAdminUsers,
   resetAdminUserPassword,
   syncAdminHfDailyPapers,
+  updateAdminInvitationCodeMaxUses,
   updateAdminUser,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -53,6 +54,8 @@ export function AdminPage() {
   const [hfDailyMessage, setHfDailyMessage] = useState<string | null>(null);
   const [isGeneratingInvitation, setIsGeneratingInvitation] = useState(false);
   const [invitationMaxUses, setInvitationMaxUses] = useState('1');
+  const [invitationMaxUseDrafts, setInvitationMaxUseDrafts] = useState<Record<string, string>>({});
+  const [updatingInvitationId, setUpdatingInvitationId] = useState<string | null>(null);
   const [generatedInvitationCode, setGeneratedInvitationCode] = useState<string | null>(null);
   const [invitationMessage, setInvitationMessage] = useState<string | null>(null);
   const [currentPassword, setCurrentPassword] = useState('');
@@ -76,6 +79,9 @@ export function AdminPage() {
       setMetrics(nextMetrics);
       setUsers(nextUsers);
       setInvitationCodes(nextInvitationCodes.codes);
+      setInvitationMaxUseDrafts(Object.fromEntries(
+        nextInvitationCodes.codes.map((code) => [code.id, String(code.max_uses)]),
+      ));
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -193,6 +199,32 @@ export function AdminPage() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : '删除邀请码失败');
+    }
+  };
+
+  const updateInvitationMaxUses = async (target: AdminInvitationCode) => {
+    const draft = invitationMaxUseDrafts[target.id] ?? String(target.max_uses);
+    const maxUses = Number(draft);
+    if (!Number.isInteger(maxUses) || maxUses < 1 || maxUses > 10000) {
+      setError('邀请码可使用次数必须是 1 到 10000 之间的整数');
+      return;
+    }
+    if (maxUses < target.used_count) {
+      setError('邀请码可使用次数不能小于已使用次数');
+      return;
+    }
+
+    setError(null);
+    setInvitationMessage(null);
+    setUpdatingInvitationId(target.id);
+    try {
+      await updateAdminInvitationCodeMaxUses(target.id, maxUses);
+      setInvitationMessage('邀请码可使用次数已更新');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新邀请码可使用次数失败');
+    } finally {
+      setUpdatingInvitationId(null);
     }
   };
 
@@ -330,7 +362,7 @@ export function AdminPage() {
         ) : null}
 
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[720px] text-left text-sm">
+          <table className="w-full min-w-[860px] text-left text-sm">
             <thead className="border-b border-[#eef2f7] text-[#728095]">
               <tr>
                 <th className="py-3">邀请码</th>
@@ -364,7 +396,35 @@ export function AdminPage() {
                           <span className="text-[#16a34a]">可用</span>
                         )}
                       </td>
-                      <td>{code.used_count} / {code.max_uses}</td>
+                      <td>
+                        <div className="flex items-center gap-2">
+                          <span className="text-[#728095]">{code.used_count} /</span>
+                          <Input
+                            type="number"
+                            min={Math.max(code.used_count, 1)}
+                            max={10000}
+                            value={invitationMaxUseDrafts[code.id] ?? String(code.max_uses)}
+                            onChange={(event) => {
+                              const nextValue = event.target.value;
+                              setInvitationMaxUseDrafts((drafts) => ({ ...drafts, [code.id]: nextValue }));
+                            }}
+                            className="h-8 w-24 rounded-full bg-[#f8fafc]"
+                          />
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="rounded-full"
+                            disabled={
+                              updatingInvitationId === code.id
+                              || (invitationMaxUseDrafts[code.id] ?? String(code.max_uses)) === String(code.max_uses)
+                            }
+                            onClick={() => void updateInvitationMaxUses(code)}
+                          >
+                            {updatingInvitationId === code.id ? <Loader2 className="mr-1 h-3.5 w-3.5 animate-spin" /> : null}
+                            保存
+                          </Button>
+                        </div>
+                      </td>
                       <td>{code.created_by_email ?? '-'}</td>
                       <td>{new Date(code.created_at).toLocaleString()}</td>
                       <td>{code.last_used_at ? new Date(code.last_used_at).toLocaleString() : '-'}</td>

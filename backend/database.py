@@ -229,8 +229,18 @@ def upsert_hf_daily_papers(daily_date: date, entries: list[dict]) -> list[str]:
 
     def operation() -> list[str]:
         analyzable_paper_ids: list[str] = []
+        selected_paper_ids: list[str] = [entry["paper"]["id"] for entry in entries]
         with _get_connection() as conn:
             with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    DELETE FROM hf_daily_papers
+                    WHERE daily_date = %s
+                      AND paper_id <> ALL(%s)
+                    """,
+                    (daily_date, selected_paper_ids),
+                )
+
                 for entry in entries:
                     paper_info = entry["paper"]
                     daily_info = entry["daily"]
@@ -803,6 +813,42 @@ def delete_invitation_code(code_id: str) -> bool:
         return deleted
 
     return _run_with_retry(operation, f"delete_invitation_code:{code_id}")
+
+
+def update_invitation_code_max_uses(code_id: str, max_uses: int) -> tuple[dict | None, str | None]:
+    def operation() -> tuple[dict | None, str | None]:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, used_count
+                    FROM invitation_codes
+                    WHERE id = %s
+                    FOR UPDATE
+                    """,
+                    (code_id,),
+                )
+                existing = cur.fetchone()
+                if not existing:
+                    return None, "not_found"
+                if max_uses < existing["used_count"]:
+                    return None, "below_used_count"
+
+                cur.execute(
+                    """
+                    UPDATE invitation_codes
+                    SET max_uses = %s
+                    WHERE id = %s
+                    RETURNING id, code_text, code_prefix, max_uses, used_count, is_active,
+                              created_by, created_at, last_used_at
+                    """,
+                    (max_uses, code_id),
+                )
+                invitation = cur.fetchone()
+            conn.commit()
+        return _normalize_invitation_code_row(invitation), None
+
+    return _run_with_retry(operation, f"update_invitation_code_max_uses:{code_id}")
 
 
 def get_paper_marks(user_id: str, paper_ids: list[str]) -> dict[str, dict]:
