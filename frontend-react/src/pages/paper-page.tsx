@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, Eye, ExternalLink, FileText, Heart, Loader2, Sparkles } from 'lucide-react';
+import { ChevronLeft, Eye, FileText, Heart, Loader2, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -145,7 +145,6 @@ export function PaperPage({ paperId }: PaperPageProps) {
 
   const venue = getVenueParts(paper?.venue);
   const keywords = normalizeKeywords(paper?.keywords);
-  const openReviewUrl = `https://openreview.net/forum?id=${paperId}`;
   const pdfUrl = paper?.pdf || `https://openreview.net/pdf?id=${paperId}`;
   const kimiPrefillPrompt = [
     '你是一位人工智能领域的专家。我是一位刚入门的人工智能新人，正在学习这篇论文。请你详细的向我讲解教授这篇论文，必要的时候用公式或者代码辅助解释。确保我能够理解每个细节和背景知识和理解论文的motivation还有方法。',
@@ -239,12 +238,6 @@ export function PaperPage({ paperId }: PaperPageProps) {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <a href={openReviewUrl} target="_blank" rel="noreferrer">
-                    <Button variant="outline" className="rounded-full border-[#f3d597] bg-[#fff7df] text-[#c77b00]">
-                      <ExternalLink className="mr-1.5 h-4 w-4" />
-                      OpenReview
-                    </Button>
-                  </a>
                   <a href={pdfUrl} target="_blank" rel="noreferrer">
                     <Button variant="outline" className="rounded-full border-[#bfdbfe] bg-[#eff6ff] text-[#2563eb]">
                       <FileText className="mr-1.5 h-4 w-4" />

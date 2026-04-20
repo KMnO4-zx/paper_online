@@ -1,4 +1,4 @@
-import { Eye, ExternalLink, FileText, Heart } from 'lucide-react';
+import { Eye, Heart } from 'lucide-react';
 import { useState } from 'react';
 
 import { RichContent } from '@/components/rich-content';
@@ -43,8 +43,6 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
   const [isLikeAnimating, setIsLikeAnimating] = useState(false);
   const keywords = normalizeKeywords(paper.keywords).slice(0, 6);
   const venue = getVenueParts(paper.venue);
-  const openReviewUrl = `https://openreview.net/forum?id=${paper.id}`;
-  const pdfUrl = paper.pdf || `https://openreview.net/pdf?id=${paper.id}`;
 
   return (
     <article
@@ -85,31 +83,7 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
       </p>
 
       <div className="flex flex-wrap items-center gap-2">
-        <a
-          href={openReviewUrl}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <Button variant="outline" size="sm" className="rounded-full border-[#f3d597] bg-[#fff7df] text-[#c77b00]">
-            <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-            OpenReview
-          </Button>
-        </a>
-
-        <a
-          href={pdfUrl}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <Button variant="outline" size="sm" className="rounded-full border-[#bfdbfe] bg-[#eff6ff] text-[#2563eb]">
-            <FileText className="mr-1.5 h-3.5 w-3.5" />
-            PDF
-          </Button>
-        </a>
-
-        <div className="ml-auto flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
             size="sm"
