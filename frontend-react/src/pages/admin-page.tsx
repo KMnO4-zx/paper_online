@@ -32,6 +32,7 @@ import {
   fetchAdminOnlineMetrics,
   fetchAdminUsers,
   resetAdminUserPassword,
+  syncAdminHfDailyPapers,
   updateAdminUser,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
@@ -48,6 +49,8 @@ export function AdminPage() {
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isSyncingHfDaily, setIsSyncingHfDaily] = useState(false);
+  const [hfDailyMessage, setHfDailyMessage] = useState<string | null>(null);
   const [isGeneratingInvitation, setIsGeneratingInvitation] = useState(false);
   const [invitationMaxUses, setInvitationMaxUses] = useState('1');
   const [generatedInvitationCode, setGeneratedInvitationCode] = useState<string | null>(null);
@@ -193,6 +196,20 @@ export function AdminPage() {
     }
   };
 
+  const syncHfDailyPapers = async () => {
+    setError(null);
+    setHfDailyMessage(null);
+    setIsSyncingHfDaily(true);
+    try {
+      const payload = await syncAdminHfDailyPapers();
+      setHfDailyMessage(`已同步 ${payload.selected} 篇 HF Daily Papers，后台将自动分析待分析论文。`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '同步 HF Daily Papers 失败');
+    } finally {
+      setIsSyncingHfDaily(false);
+    }
+  };
+
   return (
     <div className="mx-auto max-w-7xl animate-fade-in space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -200,13 +217,20 @@ export function AdminPage() {
           <h1 className="text-3xl font-semibold text-[#172033]">管理员后台</h1>
           <p className="mt-1 text-sm text-[#728095]">在线趋势、用户管理和管理员密码维护。</p>
         </div>
-        <Button variant="outline" className="rounded-full" onClick={() => void load()} disabled={isRefreshing}>
-          {isRefreshing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-2 h-4 w-4" />}
-          刷新
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" className="rounded-full" onClick={() => void syncHfDailyPapers()} disabled={isSyncingHfDaily}>
+            {isSyncingHfDaily ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-2 h-4 w-4" />}
+            同步 HF Daily
+          </Button>
+          <Button variant="outline" className="rounded-full" onClick={() => void load()} disabled={isRefreshing}>
+            {isRefreshing ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-2 h-4 w-4" />}
+            刷新
+          </Button>
+        </div>
       </div>
 
       {error ? <div className="rounded-2xl bg-[#fff1f2] p-4 text-sm text-[#b91c1c]">{error}</div> : null}
+      {hfDailyMessage ? <div className="rounded-2xl bg-[#ecfdf5] p-4 text-sm text-[#047857]">{hfDailyMessage}</div> : null}
 
       <section className="grid gap-4 md:grid-cols-3">
         <div className="rounded-[28px] bg-white p-5 shadow-sm ring-1 ring-black/5">

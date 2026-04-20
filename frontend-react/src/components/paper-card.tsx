@@ -1,4 +1,4 @@
-import { Eye, Heart } from 'lucide-react';
+import { CalendarDays, Eye, Heart, Star, ThumbsUp } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { RichContent } from '@/components/rich-content';
@@ -24,6 +24,8 @@ function getConferenceColor(conference: string) {
       return 'bg-violet-50 text-violet-700 border-violet-200';
     case 'ICML':
       return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    case 'Hugging Face':
+      return 'bg-amber-50 text-amber-700 border-amber-200';
     default:
       return 'bg-slate-100 text-slate-700 border-slate-200';
   }
@@ -46,6 +48,8 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
   const [isLikeAnimating, setIsLikeAnimating] = useState(false);
   const keywords = normalizeKeywords(paper.keywords).slice(0, 6);
   const venue = getVenueParts(paper.venue);
+  const isHfDaily = venue.conference === 'Hugging Face';
+  const createdAtLabel = paper.created_at ? new Date(paper.created_at).toLocaleString() : null;
 
   useEffect(() => {
     let active = true;
@@ -97,6 +101,18 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
             {paper.primary_area}
           </Badge>
         ) : null}
+        {isHfDaily && typeof paper.hf_daily?.upvotes === 'number' ? (
+          <Badge variant="outline" className="border-[#fed7aa] bg-[#fff7ed] text-[#c2410c]">
+            <ThumbsUp className="mr-1 h-3 w-3" />
+            {paper.hf_daily.upvotes}
+          </Badge>
+        ) : null}
+        {isHfDaily && typeof paper.hf_daily?.github_stars === 'number' ? (
+          <Badge variant="outline" className="border-[#dbeafe] bg-[#eff6ff] text-[#2563eb]">
+            <Star className="mr-1 h-3 w-3" />
+            {paper.hf_daily.github_stars}
+          </Badge>
+        ) : null}
       </div>
 
       <h3 className="mb-3 text-xl font-semibold leading-snug text-[#1f2937] transition-colors group-hover:text-[#ff7a00]">
@@ -119,6 +135,13 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
       <p className="mb-5 line-clamp-3 text-sm leading-6 text-[#67758a]">
         {paper.abstract || '暂无摘要'}
       </p>
+
+      {isHfDaily && createdAtLabel ? (
+        <div className="mb-4 flex items-center gap-1.5 text-xs text-[#728095]">
+          <CalendarDays className="h-3.5 w-3.5 text-[#ff9900]" />
+          入库时间：{createdAtLabel}
+        </div>
+      ) : null}
 
       <div className="flex flex-wrap items-center gap-2">
         <div className="flex flex-wrap gap-2">

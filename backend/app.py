@@ -3,8 +3,9 @@ import math
 import logging
 import secrets
 from pathlib import Path
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, time as datetime_time, timedelta, timezone
 from contextlib import asynccontextmanager
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
@@ -26,6 +27,7 @@ from config import settings
 from llm import SiliconflowLLM, OpenRouterLLM, StepLLM, ArkPlanLLM
 from migrations import apply_migrations
 from utils import get_or_cache_paper_content, get_openreview_info, ReaderError, OpenReviewError, truncate_content_for_llm
+from hf_daily import sync_hf_daily_papers
 from database import (
     DatabaseError,
     count_active_admins,
@@ -42,6 +44,7 @@ from database import (
     get_chat_session,
     get_chat_sessions_for_account,
     get_conference_papers,
+    get_hf_daily_papers,
     get_paper,
     get_paper_marks,
     get_presence_counts,
@@ -49,6 +52,7 @@ from database import (
     get_user_by_email,
     get_user_by_id,
     get_user_by_session_token_hash,
+    has_hf_daily_papers_for_date,
     list_invitation_codes,
     list_marked_papers,
     list_users,
@@ -78,6 +82,8 @@ chat_sessions: dict[str, ChatSession] = {}
 background_analyzer = BackgroundAnalyzer(llm, check_interval=settings.background_analysis.check_interval_seconds)
 background_task = None
 presence_snapshot_task = None
+hf_daily_task = None
+hf_daily_analysis_tasks: set[asyncio.Task] = set()
 
 
 async def run_presence_snapshots():
@@ -91,6 +97,110 @@ async def run_presence_snapshots():
         except DatabaseError as exc:
             logger.warning("在线人数快照写入失败: %s", exc)
         await asyncio.sleep(settings.presence.snapshot_interval_seconds)
+
+
+def get_hf_daily_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(settings.hf_daily.timezone)
+    except ZoneInfoNotFoundError:
+        logger.warning("HF Daily timezone 无效，回退到 UTC: %s", settings.hf_daily.timezone)
+        return ZoneInfo("UTC")
+
+
+def get_hf_daily_fetch_time() -> datetime_time:
+    raw_value = settings.hf_daily.fetch_time.strip()
+    try:
+        hour_text, minute_text = raw_value.split(":", 1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return datetime_time(hour=hour, minute=minute)
+    except (ValueError, AttributeError):
+        pass
+
+    logger.warning("HF Daily fetch_time 无效，回退到 22:00: %s", raw_value)
+    return datetime_time(hour=22, minute=0)
+
+
+async def analyze_hf_daily_papers(paper_ids: list[str]) -> None:
+    if not paper_ids:
+        return
+    if not llm.is_configured():
+        logger.warning("HF Daily 已入库，但 LLM 未配置，跳过自动分析")
+        return
+
+    seen: set[str] = set()
+    for paper_id in paper_ids:
+        if paper_id in seen:
+            continue
+        seen.add(paper_id)
+        await background_analyzer.analyze_paper(paper_id)
+        await asyncio.sleep(1)
+
+
+def schedule_hf_daily_analysis(paper_ids: list[str]) -> None:
+    if not paper_ids:
+        return
+    task = asyncio.create_task(analyze_hf_daily_papers(paper_ids))
+    hf_daily_analysis_tasks.add(task)
+
+    def finalize(completed_task: asyncio.Task) -> None:
+        hf_daily_analysis_tasks.discard(completed_task)
+        try:
+            completed_task.result()
+        except asyncio.CancelledError:
+            pass
+        except Exception as exc:
+            logger.warning("HF Daily 自动分析任务失败: %s", exc)
+
+    task.add_done_callback(finalize)
+
+
+async def sync_hf_daily_once() -> dict:
+    tz = get_hf_daily_timezone()
+    daily_date = datetime.now(tz).date()
+    result = await asyncio.to_thread(
+        sync_hf_daily_papers,
+        settings.hf_daily.api_url,
+        settings.hf_daily.top_n,
+        daily_date,
+    )
+    schedule_hf_daily_analysis(result.get("analyzable_paper_ids", []))
+    return result
+
+
+async def run_hf_daily_scheduler():
+    logger.info(
+        "HF Daily 定时任务启动: enabled=%s time=%s timezone=%s top_n=%s",
+        settings.hf_daily.enabled,
+        settings.hf_daily.fetch_time,
+        settings.hf_daily.timezone,
+        settings.hf_daily.top_n,
+    )
+    while True:
+        tz = get_hf_daily_timezone()
+        fetch_time = get_hf_daily_fetch_time()
+        now = datetime.now(tz)
+        today_run_at = datetime.combine(now.date(), fetch_time, tzinfo=tz)
+
+        try:
+            if now >= today_run_at:
+                already_synced = await asyncio.to_thread(has_hf_daily_papers_for_date, now.date())
+                if not already_synced:
+                    logger.info("开始补抓今日 HF Daily Papers: %s", now.date().isoformat())
+                    await sync_hf_daily_once()
+                    now = datetime.now(tz)
+
+            next_run_date = now.date()
+            if now >= datetime.combine(next_run_date, fetch_time, tzinfo=tz):
+                next_run_date = next_run_date + timedelta(days=1)
+            next_run_at = datetime.combine(next_run_date, fetch_time, tzinfo=tz)
+            await asyncio.sleep(max((next_run_at - now).total_seconds(), 60))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("HF Daily 定时任务失败，1 小时后重试: %s", exc)
+            await asyncio.sleep(3600)
 
 
 def bootstrap_admin_user() -> None:
@@ -113,7 +223,7 @@ def ensure_llm_configured() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global background_task, presence_snapshot_task
+    global background_task, presence_snapshot_task, hf_daily_task
     try:
         await asyncio.to_thread(apply_migrations)
     except Exception as exc:
@@ -134,11 +244,15 @@ async def lifespan(app: FastAPI):
         logger.info("后台分析任务未启用")
 
     presence_snapshot_task = asyncio.create_task(run_presence_snapshots())
+    if settings.hf_daily.enabled:
+        hf_daily_task = asyncio.create_task(run_hf_daily_scheduler())
+    else:
+        logger.info("HF Daily 定时任务未启用")
 
     yield
 
     background_analyzer.stop()
-    for task in (background_task, presence_snapshot_task):
+    for task in (background_task, presence_snapshot_task, hf_daily_task, *hf_daily_analysis_tasks):
         if not task:
             continue
         task.cancel()
@@ -511,6 +625,17 @@ async def admin_online_metrics(range: str = "24h", admin: dict = Depends(require
         }
     except DatabaseError as exc:
         raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+
+
+@app.post("/admin/hf-daily-papers/sync")
+async def admin_sync_hf_daily_papers(admin: dict = Depends(require_admin_user)):
+    try:
+        return await sync_hf_daily_once()
+    except DatabaseError as exc:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+    except Exception as exc:
+        logger.warning("管理员手动同步 HF Daily Papers 失败: %s", exc)
+        raise HTTPException(status_code=502, detail="HF Daily Papers sync failed") from exc
 
 
 @app.get("/admin/users")
@@ -924,6 +1049,38 @@ async def get_conference_papers_endpoint(
     }
 
 
+@app.get("/hf-daily-papers")
+async def get_hf_daily_papers_endpoint(
+    page: int = 1,
+    limit: int = 8,
+    search: str = "",
+    search_title: bool = True,
+    search_abstract: bool = True,
+    search_keywords: bool = True
+):
+    safe_page = max(page, 1)
+    safe_limit = min(max(limit, 1), 100)
+    offset = (safe_page - 1) * safe_limit
+    try:
+        papers, total = get_hf_daily_papers(
+            offset,
+            safe_limit,
+            search if search else None,
+            search_title,
+            search_abstract,
+            search_keywords,
+        )
+    except DatabaseError as e:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
+
+    return {
+        "papers": papers,
+        "total": total,
+        "page": safe_page,
+        "pages": math.ceil(total / safe_limit) if total > 0 else 1
+    }
+
+
 @app.get("/search/papers")
 async def search_all_papers_endpoint(
     page: int = 1,
@@ -997,6 +1154,11 @@ async def serve_admin_frontend():
 
 @app.get("/me")
 async def serve_me_frontend():
+    return FileResponse(get_frontend_index())
+
+
+@app.get("/hf-daily")
+async def serve_hf_daily_frontend():
     return FileResponse(get_frontend_index())
 
 

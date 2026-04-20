@@ -1,6 +1,7 @@
 import { SiteNavbar } from '@/components/site-navbar';
 import { HomePage } from '@/pages/home-page';
 import { ConferencePage } from '@/pages/conference-page';
+import { HfDailyPage } from '@/pages/hf-daily-page';
 import { PaperPage } from '@/pages/paper-page';
 import { SearchPage } from '@/pages/search-page';
 import { AdminPage } from '@/pages/admin-page';
@@ -16,6 +17,8 @@ function App() {
   let content = <HomePage />;
   if (pathname === '/search') {
     content = <SearchPage />;
+  } else if (pathname === '/hf-daily') {
+    content = <HfDailyPage />;
   } else if (pathname === '/login') {
     content = <AuthPage mode="login" />;
   } else if (pathname === '/register') {

@@ -13,6 +13,7 @@ import type {
   Paper,
   PaperMark,
   PaperListResponse,
+  HfDailySyncResponse,
   SearchFilters,
 } from '@/types';
 
@@ -101,6 +102,15 @@ export async function fetchSearchPapers(
 ): Promise<PaperListResponse> {
   const params = buildSearchRequestParams(page, query, filters);
   return apiFetch<PaperListResponse>(`/search/papers?${params.toString()}`);
+}
+
+export async function fetchHfDailyPapers(
+  page: number,
+  query: string,
+  filters: SearchFilters,
+): Promise<PaperListResponse> {
+  const params = buildSearchRequestParams(page, query, filters);
+  return apiFetch<PaperListResponse>(`/hf-daily-papers?${params.toString()}`);
 }
 
 export async function fetchChatSessions(paperId: string): Promise<ChatSessionSummary[]> {
@@ -209,6 +219,10 @@ export async function updatePaperMark(
 
 export async function fetchAdminOnlineMetrics(range: '24h' | '7d'): Promise<AdminOnlineMetrics> {
   return apiFetch<AdminOnlineMetrics>(`/admin/metrics/online?range=${range}`);
+}
+
+export async function syncAdminHfDailyPapers(): Promise<HfDailySyncResponse> {
+  return apiFetch<HfDailySyncResponse>('/admin/hf-daily-papers/sync', { method: 'POST' });
 }
 
 export async function fetchAdminUsers(

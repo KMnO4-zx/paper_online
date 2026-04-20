@@ -46,6 +46,13 @@ background_analysis:
   enabled: false
   check_interval_seconds: 86400
 
+hf_daily:
+  enabled: true
+  api_url: https://huggingface.co/api/daily_papers
+  fetch_time: "22:00"
+  timezone: Asia/Shanghai
+  top_n: 5
+
 cors:
   allowed_origins:
     - http://127.0.0.1:5173

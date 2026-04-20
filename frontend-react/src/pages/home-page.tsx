@@ -72,6 +72,32 @@ export function HomePage() {
       </section>
 
       <section className="mt-10">
+        <button
+          type="button"
+          onClick={() => navigate('/hf-daily')}
+          className="group relative w-full overflow-hidden rounded-[32px] bg-white p-6 text-left shadow-sm ring-1 ring-black/5 transition hover:-translate-y-1 hover:shadow-xl"
+        >
+          <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-[#ff9900] via-[#ffd166] to-[#ff7a00]" />
+          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-[#fff7ed] px-3 py-1 text-sm text-[#c2410c]">
+                <Sparkles className="h-4 w-4 text-[#ff9900]" />
+                每日热门论文
+              </div>
+              <h2 className="text-2xl font-semibold text-[#172033]">Hugging Face Daily Papers</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-[#6b7280]">
+                每天晚上自动抓取 Hugging Face Daily Papers 点赞最多的 5 篇论文，按入库时间倒序展示，并自动进行 AI 分析。
+              </p>
+            </div>
+            <Button variant="ghost" className="px-0 text-[#ff7a00] hover:bg-transparent hover:text-[#ff7a00]">
+              查看 Daily Papers
+              <ArrowRight className="ml-2 h-4 w-4 transition group-hover:translate-x-1" />
+            </Button>
+          </div>
+        </button>
+      </section>
+
+      <section className="mt-10">
         <div className="mb-6 flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-semibold text-[#172033]">浏览会议论文</h2>

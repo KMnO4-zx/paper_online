@@ -34,6 +34,15 @@ class BackgroundAnalysisConfig:
 
 
 @dataclass(frozen=True)
+class HfDailyConfig:
+    enabled: bool = True
+    api_url: str = "https://huggingface.co/api/daily_papers"
+    fetch_time: str = "22:00"
+    timezone: str = "Asia/Shanghai"
+    top_n: int = 5
+
+
+@dataclass(frozen=True)
 class CorsConfig:
     allowed_origins: tuple[str, ...] = ("http://127.0.0.1:5173", "http://localhost:5173")
 
@@ -80,6 +89,7 @@ class AppConfig:
     auth: AuthConfig
     presence: PresenceConfig
     background_analysis: BackgroundAnalysisConfig
+    hf_daily: HfDailyConfig
     cors: CorsConfig
 
 
@@ -128,6 +138,7 @@ def load_app_config() -> AppConfig:
     raw_auth = raw.get("auth") if isinstance(raw.get("auth"), dict) else {}
     raw_presence = raw.get("presence") if isinstance(raw.get("presence"), dict) else {}
     raw_background_analysis = raw.get("background_analysis") if isinstance(raw.get("background_analysis"), dict) else {}
+    raw_hf_daily = raw.get("hf_daily") if isinstance(raw.get("hf_daily"), dict) else {}
     raw_cors = raw.get("cors") if isinstance(raw.get("cors"), dict) else {}
     raw_database = raw.get("database") if isinstance(raw.get("database"), dict) else {}
     raw_llm = raw.get("llm") if isinstance(raw.get("llm"), dict) else {}
@@ -195,6 +206,30 @@ def load_app_config() -> AppConfig:
         ),
     )
 
+    default_hf_daily = HfDailyConfig()
+    hf_daily = HfDailyConfig(
+        enabled=_as_bool(
+            raw_hf_daily.get("enabled"),
+            default_hf_daily.enabled,
+        ),
+        api_url=_as_str(
+            raw_hf_daily.get("api_url"),
+            default_hf_daily.api_url,
+        ),
+        fetch_time=_as_str(
+            raw_hf_daily.get("fetch_time"),
+            default_hf_daily.fetch_time,
+        ),
+        timezone=_as_str(
+            raw_hf_daily.get("timezone"),
+            default_hf_daily.timezone,
+        ),
+        top_n=_as_int(
+            raw_hf_daily.get("top_n"),
+            default_hf_daily.top_n,
+        ),
+    )
+
     default_cors = CorsConfig()
     cors = CorsConfig(
         allowed_origins=_as_origins(raw_cors.get("allowed_origins"), default_cors.allowed_origins),
@@ -222,6 +257,7 @@ def load_app_config() -> AppConfig:
         auth=auth,
         presence=presence,
         background_analysis=background_analysis,
+        hf_daily=hf_daily,
         cors=cors,
     )
 

@@ -1,7 +1,7 @@
 import logging
 import time
 from contextlib import contextmanager
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Iterator, TypeVar
 
 import psycopg
@@ -221,6 +221,132 @@ def save_paper(paper_info: dict, llm_response: str = None):
             conn.commit()
 
     _run_with_retry(operation, f"save_paper:{paper_info['id']}")
+
+
+def upsert_hf_daily_papers(daily_date: date, entries: list[dict]) -> list[str]:
+    if not DATABASE_URL or not entries:
+        return []
+
+    def operation() -> list[str]:
+        analyzable_paper_ids: list[str] = []
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                for entry in entries:
+                    paper_info = entry["paper"]
+                    daily_info = entry["daily"]
+                    paper_id = paper_info["id"]
+                    normalized_pdf = normalize_paper_pdf_url(paper_id, paper_info.get("pdf"))
+
+                    cur.execute(
+                        """
+                        INSERT INTO papers (
+                            id,
+                            title,
+                            abstract,
+                            keywords,
+                            pdf,
+                            venue,
+                            primary_area
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET
+                            title = EXCLUDED.title,
+                            abstract = EXCLUDED.abstract,
+                            keywords = EXCLUDED.keywords,
+                            pdf = EXCLUDED.pdf,
+                            venue = EXCLUDED.venue,
+                            primary_area = EXCLUDED.primary_area
+                        RETURNING llm_response
+                        """,
+                        (
+                            paper_id,
+                            paper_info.get("title"),
+                            paper_info.get("abstract"),
+                            Jsonb(paper_info.get("keywords", [])),
+                            normalized_pdf,
+                            paper_info.get("venue"),
+                            paper_info.get("primary_area"),
+                        ),
+                    )
+                    paper_row = cur.fetchone()
+                    if not paper_row or not paper_row.get("llm_response"):
+                        analyzable_paper_ids.append(paper_id)
+
+                    cur.execute("DELETE FROM authors WHERE paper_id = %s", (paper_id,))
+                    authors = paper_info.get("authors", [])
+                    if authors:
+                        cur.executemany(
+                            """
+                            INSERT INTO authors (paper_id, author_name, author_order)
+                            VALUES (%s, %s, %s)
+                            """,
+                            [
+                                (paper_id, author, index)
+                                for index, author in enumerate(authors)
+                            ],
+                        )
+
+                    cur.execute("DELETE FROM keywords WHERE paper_id = %s", (paper_id,))
+                    keywords = paper_info.get("keywords", [])
+                    if keywords:
+                        cur.executemany(
+                            """
+                            INSERT INTO keywords (paper_id, keyword)
+                            VALUES (%s, %s)
+                            """,
+                            [(paper_id, keyword) for keyword in keywords],
+                        )
+
+                    cur.execute(
+                        """
+                        INSERT INTO hf_daily_papers (
+                            daily_date,
+                            paper_id,
+                            rank,
+                            upvotes,
+                            thumbnail,
+                            discussion_id,
+                            project_page,
+                            github_repo,
+                            github_stars,
+                            num_comments,
+                            raw
+                        )
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                        ON CONFLICT (daily_date, paper_id) DO UPDATE SET
+                            rank = EXCLUDED.rank,
+                            upvotes = EXCLUDED.upvotes,
+                            thumbnail = EXCLUDED.thumbnail,
+                            discussion_id = EXCLUDED.discussion_id,
+                            project_page = EXCLUDED.project_page,
+                            github_repo = EXCLUDED.github_repo,
+                            github_stars = EXCLUDED.github_stars,
+                            num_comments = EXCLUDED.num_comments,
+                            raw = EXCLUDED.raw,
+                            updated_at = NOW()
+                        """,
+                        (
+                            daily_date,
+                            paper_id,
+                            daily_info["rank"],
+                            daily_info.get("upvotes", 0),
+                            daily_info.get("thumbnail"),
+                            daily_info.get("discussion_id"),
+                            daily_info.get("project_page"),
+                            daily_info.get("github_repo"),
+                            daily_info.get("github_stars"),
+                            daily_info.get("num_comments"),
+                            Jsonb(daily_info.get("raw", {})),
+                        ),
+                    )
+
+            conn.commit()
+
+        _conference_cache.clear()
+        _cache_timestamp.clear()
+        return analyzable_paper_ids
+
+    return _run_with_retry(operation, f"upsert_hf_daily_papers:{daily_date.isoformat()}")
 
 
 def update_llm_response(paper_id: str, response: str):
@@ -1402,6 +1528,123 @@ def search_all_papers(
         search_abstract,
         search_keywords,
     )
+
+
+def has_hf_daily_papers_for_date(daily_date: date) -> bool:
+    def operation() -> bool:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM hf_daily_papers WHERE daily_date = %s LIMIT 1",
+                    (daily_date,),
+                )
+                return cur.fetchone() is not None
+
+    return _run_with_retry(operation, f"has_hf_daily_papers_for_date:{daily_date.isoformat()}")
+
+
+def get_hf_daily_papers(
+    offset: int,
+    limit: int,
+    search: str = None,
+    search_title: bool = True,
+    search_abstract: bool = True,
+    search_keywords: bool = True,
+) -> tuple[list[dict], int]:
+    if not DATABASE_URL:
+        return [], 0
+
+    if search and not (search_title or search_abstract or search_keywords):
+        return [], 0
+
+    def operation() -> tuple[list[dict], int]:
+        where_parts = ["p.venue = %s"]
+        params: list[object] = ["Hugging Face Daily"]
+        if search:
+            search_parts = []
+            if search_title:
+                search_parts.append("p.title ILIKE %s")
+                params.append(f"%{search}%")
+            if search_abstract:
+                search_parts.append("p.abstract ILIKE %s")
+                params.append(f"%{search}%")
+            if search_keywords:
+                search_parts.append(
+                    """
+                    EXISTS (
+                        SELECT 1
+                        FROM keywords
+                        WHERE keywords.paper_id = p.id
+                          AND keywords.keyword ILIKE %s
+                    )
+                    """
+                )
+                params.append(f"%{search}%")
+            where_parts.append(f"({' OR '.join(search_parts)})")
+
+        where_clause = " AND ".join(where_parts)
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"SELECT COUNT(*) AS total FROM papers p WHERE {where_clause}",
+                    params,
+                )
+                total = int(cur.fetchone()["total"] or 0)
+
+                cur.execute(
+                    f"""
+                    SELECT p.*,
+                           h.daily_date AS hf_daily_date,
+                           h.rank AS hf_daily_rank,
+                           h.upvotes AS hf_daily_upvotes,
+                           h.thumbnail AS hf_daily_thumbnail,
+                           h.discussion_id AS hf_daily_discussion_id,
+                           h.project_page AS hf_daily_project_page,
+                           h.github_repo AS hf_daily_github_repo,
+                           h.github_stars AS hf_daily_github_stars,
+                           h.num_comments AS hf_daily_num_comments
+                    FROM papers p
+                    LEFT JOIN LATERAL (
+                        SELECT *
+                        FROM hf_daily_papers
+                        WHERE hf_daily_papers.paper_id = p.id
+                        ORDER BY daily_date DESC, rank ASC
+                        LIMIT 1
+                    ) h ON TRUE
+                    WHERE {where_clause}
+                    ORDER BY
+                        h.daily_date DESC NULLS LAST,
+                        h.upvotes DESC NULLS LAST,
+                        h.rank ASC NULLS LAST,
+                        p.created_at DESC NULLS LAST,
+                        p.title ASC,
+                        p.id ASC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [*params, limit, offset],
+                )
+                rows = cur.fetchall()
+
+        papers: list[dict] = []
+        for row in rows:
+            paper = dict(row)
+            paper["hf_daily"] = {
+                "daily_date": paper.pop("hf_daily_date", None),
+                "rank": paper.pop("hf_daily_rank", None),
+                "upvotes": paper.pop("hf_daily_upvotes", None),
+                "thumbnail": paper.pop("hf_daily_thumbnail", None),
+                "discussion_id": paper.pop("hf_daily_discussion_id", None),
+                "project_page": paper.pop("hf_daily_project_page", None),
+                "github_repo": paper.pop("hf_daily_github_repo", None),
+                "github_stars": paper.pop("hf_daily_github_stars", None),
+                "num_comments": paper.pop("hf_daily_num_comments", None),
+            }
+            papers.append(paper)
+
+        papers, _ = _load_keywords_for_papers(papers)
+        return papers, total
+
+    return _run_with_retry(operation, "get_hf_daily_papers")
 
 
 def get_unanalyzed_papers(limit: int = 10) -> list:

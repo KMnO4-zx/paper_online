@@ -10,10 +10,24 @@ export interface Paper {
   authors?: string[];
   pdf?: string | null;
   llm_response?: string | null;
+  created_at?: string;
+  hf_daily?: HfDailyPaperMeta | null;
   openReviewUrl?: string;
   pdfUrl?: string;
   hasSeen?: boolean;
   isLiked?: boolean;
+}
+
+export interface HfDailyPaperMeta {
+  daily_date?: string | null;
+  rank?: number | null;
+  upvotes?: number | null;
+  thumbnail?: string | null;
+  discussion_id?: string | null;
+  project_page?: string | null;
+  github_repo?: string | null;
+  github_stars?: number | null;
+  num_comments?: number | null;
 }
 
 export interface Conference {
@@ -151,4 +165,11 @@ export interface OnlineTrendPoint {
 export interface AdminOnlineMetrics {
   current: OnlineCount;
   trend: OnlineTrendPoint[];
+}
+
+export interface HfDailySyncResponse {
+  daily_date: string;
+  selected: number;
+  paper_ids: string[];
+  analyzable_paper_ids: string[];
 }
