@@ -48,8 +48,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(payload.user);
       await migrateLegacyLocalData();
     },
-    register: async (email: string, password: string) => {
-      const payload = await registerRequest(email, password);
+    register: async (email: string, password: string, invitationCode: string) => {
+      const payload = await registerRequest(email, password, invitationCode);
       setUser(payload.user);
       await migrateLegacyLocalData();
     },

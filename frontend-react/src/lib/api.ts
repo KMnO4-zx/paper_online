@@ -1,4 +1,6 @@
 import type {
+  AdminInvitationCodeCreateResponse,
+  AdminInvitationCodeListResponse,
   AdminOnlineMetrics,
   AdminUserListResponse,
   AuthResponse,
@@ -129,10 +131,10 @@ export async function sendHeartbeat(clientId: string): Promise<void> {
   });
 }
 
-export async function register(email: string, password: string): Promise<AuthResponse> {
+export async function register(email: string, password: string, invitationCode: string): Promise<AuthResponse> {
   return apiFetch<AuthResponse>('/auth/register', {
     method: 'POST',
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, invitation_code: invitationCode }),
   });
 }
 
@@ -218,6 +220,23 @@ export async function fetchAdminUsers(
     params.set('search', search.trim());
   }
   return apiFetch<AdminUserListResponse>(`/admin/users?${params.toString()}`);
+}
+
+export async function fetchAdminInvitationCodes(): Promise<AdminInvitationCodeListResponse> {
+  return apiFetch<AdminInvitationCodeListResponse>('/admin/invitation-codes');
+}
+
+export async function createAdminInvitationCode(
+  maxUses: number,
+): Promise<AdminInvitationCodeCreateResponse> {
+  return apiFetch<AdminInvitationCodeCreateResponse>('/admin/invitation-codes', {
+    method: 'POST',
+    body: JSON.stringify({ max_uses: maxUses }),
+  });
+}
+
+export async function deleteAdminInvitationCode(codeId: string): Promise<void> {
+  await apiFetch<{ ok: boolean }>(`/admin/invitation-codes/${codeId}`, { method: 'DELETE' });
 }
 
 export async function updateAdminUser(

@@ -14,6 +14,7 @@ export function AuthPage({ mode }: AuthPageProps) {
   const { login, register } = useAuth();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [invitationCode, setInvitationCode] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const isRegister = mode === 'register';
@@ -26,7 +27,7 @@ export function AuthPage({ mode }: AuthPageProps) {
     setIsSubmitting(true);
     try {
       if (isRegister) {
-        await register(email, password);
+        await register(email, password, invitationCode);
       } else {
         await login(email, password);
       }
@@ -46,7 +47,9 @@ export function AuthPage({ mode }: AuthPageProps) {
             {isRegister ? '注册账号' : '登录账号'}
           </h1>
           <p className="mt-2 text-sm leading-6 text-[#728095]">
-            登录后可以同步聊天历史、点赞和看过记录，后续推荐系统也会基于这些数据工作。
+            {isRegister
+              ? '注册需要管理员发放的邀请码。登录后可以同步聊天历史、点赞和看过记录。'
+              : '登录后可以同步聊天历史、点赞和看过记录，后续推荐系统也会基于这些数据工作。'}
           </p>
         </div>
 
@@ -78,6 +81,23 @@ export function AuthPage({ mode }: AuthPageProps) {
               }}
             />
           </div>
+          {isRegister ? (
+            <div>
+              <label className="mb-1.5 block text-sm font-medium text-[#334155]">邀请码</label>
+              <Input
+                value={invitationCode}
+                autoComplete="one-time-code"
+                onChange={(event) => setInvitationCode(event.target.value)}
+                placeholder="PI-XXXX-XXXX-XXXX-XXXX"
+                className="h-11 rounded-2xl bg-[#f8fafc]"
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    void submit();
+                  }
+                }}
+              />
+            </div>
+          ) : null}
 
           {error ? <div className="rounded-2xl bg-[#fff1f2] p-3 text-sm text-[#b91c1c]">{error}</div> : null}
 

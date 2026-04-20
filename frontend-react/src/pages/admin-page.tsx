@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Loader2, RefreshCcw, Shield, Trash2, Users } from 'lucide-react';
+import { Copy, Loader2, RefreshCcw, Shield, Ticket, Trash2, Users } from 'lucide-react';
 import {
   CartesianGrid,
   Line,
@@ -25,7 +25,10 @@ import {
 } from '@/components/ui/alert-dialog';
 import {
   changePassword,
+  createAdminInvitationCode,
+  deleteAdminInvitationCode,
   deleteAdminUser,
+  fetchAdminInvitationCodes,
   fetchAdminOnlineMetrics,
   fetchAdminUsers,
   resetAdminUserPassword,
@@ -33,17 +36,22 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { navigate } from '@/lib/router';
-import type { AdminOnlineMetrics, AdminUser, AdminUserListResponse } from '@/types';
+import type { AdminInvitationCode, AdminOnlineMetrics, AdminUser, AdminUserListResponse } from '@/types';
 
 export function AdminPage() {
   const { user, isLoading } = useAuth();
   const [range, setRange] = useState<'24h' | '7d'>('24h');
   const [metrics, setMetrics] = useState<AdminOnlineMetrics | null>(null);
   const [users, setUsers] = useState<AdminUserListResponse | null>(null);
+  const [invitationCodes, setInvitationCodes] = useState<AdminInvitationCode[]>([]);
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isGeneratingInvitation, setIsGeneratingInvitation] = useState(false);
+  const [invitationMaxUses, setInvitationMaxUses] = useState('1');
+  const [generatedInvitationCode, setGeneratedInvitationCode] = useState<string | null>(null);
+  const [invitationMessage, setInvitationMessage] = useState<string | null>(null);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
@@ -57,12 +65,14 @@ export function AdminPage() {
     setIsRefreshing(true);
     setError(null);
     try {
-      const [nextMetrics, nextUsers] = await Promise.all([
+      const [nextMetrics, nextUsers, nextInvitationCodes] = await Promise.all([
         fetchAdminOnlineMetrics(range),
         fetchAdminUsers(page, search),
+        fetchAdminInvitationCodes(),
       ]);
       setMetrics(nextMetrics);
       setUsers(nextUsers);
+      setInvitationCodes(nextInvitationCodes.codes);
     } catch (err) {
       setError(err instanceof Error ? err.message : '加载失败');
     } finally {
@@ -139,6 +149,50 @@ export function AdminPage() {
     }
   };
 
+  const generateInvitationCode = async () => {
+    const maxUses = Number(invitationMaxUses);
+    if (!Number.isInteger(maxUses) || maxUses < 1 || maxUses > 10000) {
+      setError('邀请码可使用次数必须是 1 到 10000 之间的整数');
+      return;
+    }
+
+    setError(null);
+    setInvitationMessage(null);
+    setIsGeneratingInvitation(true);
+    try {
+      const payload = await createAdminInvitationCode(maxUses);
+      setGeneratedInvitationCode(payload.code);
+      setInvitationMessage('邀请码已生成，完整值也会保存在下方列表中。');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '生成邀请码失败');
+    } finally {
+      setIsGeneratingInvitation(false);
+    }
+  };
+
+  const copyInvitationCode = async () => {
+    if (!generatedInvitationCode) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(generatedInvitationCode);
+      setInvitationMessage('邀请码已复制');
+    } catch {
+      setInvitationMessage('复制失败，请手动选中邀请码复制');
+    }
+  };
+
+  const deleteInvitationCode = async (target: AdminInvitationCode) => {
+    setError(null);
+    try {
+      await deleteAdminInvitationCode(target.id);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '删除邀请码失败');
+    }
+  };
+
   return (
     <div className="mx-auto max-w-7xl animate-fade-in space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -200,6 +254,133 @@ export function AdminPage() {
               <Line type="monotone" dataKey="guest_count" stroke="#16a34a" strokeWidth={2} dot={false} name="游客" />
             </LineChart>
           </ResponsiveContainer>
+        </div>
+      </section>
+
+      <section className="rounded-[32px] bg-white p-6 shadow-sm ring-1 ring-black/5">
+        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Ticket className="h-5 w-5 text-[#ff7a00]" />
+              <h2 className="text-xl font-semibold text-[#172033]">邀请码管理</h2>
+            </div>
+            <p className="mt-1 text-sm text-[#728095]">
+              新用户注册必须使用邀请码。只有管理员可以在这里查看和生成完整邀请码。
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 sm:flex-row">
+            <Input
+              type="number"
+              min={1}
+              max={10000}
+              value={invitationMaxUses}
+              onChange={(event) => setInvitationMaxUses(event.target.value)}
+              placeholder="可使用次数"
+              className="h-10 w-full rounded-full bg-[#f8fafc] sm:w-36"
+            />
+            <Button
+              className="rounded-full bg-gradient-to-r from-[#ff9900] to-[#ff7a00] text-white"
+              onClick={() => void generateInvitationCode()}
+              disabled={isGeneratingInvitation}
+            >
+              {isGeneratingInvitation ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+              生成邀请码
+            </Button>
+          </div>
+        </div>
+
+        {generatedInvitationCode ? (
+          <div className="mb-4 rounded-2xl bg-[#fff7ed] p-4 ring-1 ring-[#fed7aa]">
+            <div className="text-sm font-medium text-[#9a3412]">新邀请码</div>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <code className="rounded-xl bg-white px-3 py-2 font-mono text-sm text-[#172033] ring-1 ring-[#fed7aa]">
+                {generatedInvitationCode}
+              </code>
+              <Button variant="outline" className="rounded-full" onClick={() => void copyInvitationCode()}>
+                <Copy className="mr-2 h-4 w-4" />
+                复制
+              </Button>
+            </div>
+            {invitationMessage ? <div className="mt-2 text-sm text-[#9a3412]">{invitationMessage}</div> : null}
+          </div>
+        ) : null}
+
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] text-left text-sm">
+            <thead className="border-b border-[#eef2f7] text-[#728095]">
+              <tr>
+                <th className="py-3">邀请码</th>
+                <th>状态</th>
+                <th>使用次数</th>
+                <th>创建者</th>
+                <th>创建时间</th>
+                <th>最近使用</th>
+                <th className="text-right">操作</th>
+              </tr>
+            </thead>
+            <tbody>
+              {invitationCodes.length === 0 ? (
+                <tr>
+                  <td className="py-4 text-[#728095]" colSpan={7}>暂无邀请码</td>
+                </tr>
+              ) : (
+                invitationCodes.map((code) => {
+                  const exhausted = code.used_count >= code.max_uses;
+                  return (
+                    <tr key={code.id} className="border-b border-[#f1f5f9]">
+                      <td className="py-3 font-mono font-medium text-[#172033]">
+                        {code.code_text ?? `${code.code_prefix}...`}
+                      </td>
+                      <td>
+                        {!code.is_active ? (
+                          <span className="text-[#b91c1c]">已停用</span>
+                        ) : exhausted ? (
+                          <span className="text-[#c2410c]">已用完</span>
+                        ) : (
+                          <span className="text-[#16a34a]">可用</span>
+                        )}
+                      </td>
+                      <td>{code.used_count} / {code.max_uses}</td>
+                      <td>{code.created_by_email ?? '-'}</td>
+                      <td>{new Date(code.created_at).toLocaleString()}</td>
+                      <td>{code.last_used_at ? new Date(code.last_used_at).toLocaleString() : '-'}</td>
+                      <td className="text-right">
+                        <AlertDialog>
+                          <AlertDialogTrigger asChild>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              className="rounded-full border-[#fecdd3] bg-[#fff1f2] text-[#be123c] hover:border-[#fda4af] hover:bg-[#ffe4e6] hover:text-[#9f1239]"
+                            >
+                              <Trash2 className="mr-1 h-4 w-4" />
+                              删除
+                            </Button>
+                          </AlertDialogTrigger>
+                          <AlertDialogContent>
+                            <AlertDialogHeader>
+                              <AlertDialogTitle>确认删除邀请码？</AlertDialogTitle>
+                              <AlertDialogDescription>
+                                将删除邀请码 {code.code_text ?? `${code.code_prefix}...`} 的记录。已注册用户不受影响，但该邀请码不能再用于注册。
+                              </AlertDialogDescription>
+                            </AlertDialogHeader>
+                            <AlertDialogFooter>
+                              <AlertDialogCancel className="rounded-full">取消</AlertDialogCancel>
+                              <AlertDialogAction
+                                className="rounded-full bg-[#e11d48] text-white hover:bg-[#be123c]"
+                                onClick={() => void deleteInvitationCode(code)}
+                              >
+                                确认删除
+                              </AlertDialogAction>
+                            </AlertDialogFooter>
+                          </AlertDialogContent>
+                        </AlertDialog>
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
         </div>
       </section>
 

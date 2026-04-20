@@ -1,6 +1,7 @@
 import asyncio
 import math
 import logging
+import secrets
 from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
@@ -29,9 +30,11 @@ from database import (
     DatabaseError,
     count_active_admins,
     create_chat_session,
-    create_user,
+    create_invitation_code,
     create_user_session,
+    create_user_with_invitation,
     delete_chat_session,
+    delete_invitation_code,
     delete_user,
     delete_last_chat_message_pair,
     ensure_admin_user,
@@ -46,6 +49,7 @@ from database import (
     get_user_by_email,
     get_user_by_id,
     get_user_by_session_token_hash,
+    list_invitation_codes,
     list_marked_papers,
     list_users,
     migrate_anonymous_data,
@@ -67,6 +71,7 @@ from background_tasks import BackgroundAnalyzer
 from markdown_utils import normalize_llm_markdown
 
 logger = logging.getLogger(__name__)
+INVITATION_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 llm = StepLLM()
 chat_sessions: dict[str, ChatSession] = {}
@@ -165,6 +170,10 @@ class AuthRequest(BaseModel):
     password: str
 
 
+class RegisterRequest(AuthRequest):
+    invitation_code: str | None = None
+
+
 class ChangePasswordRequest(BaseModel):
     current_password: str
     new_password: str
@@ -194,6 +203,10 @@ class ResetPasswordRequest(BaseModel):
     password: str
 
 
+class InvitationCodeCreateRequest(BaseModel):
+    max_uses: int = 1
+
+
 def public_user(user: dict) -> dict:
     return {
         "id": user["id"],
@@ -216,6 +229,18 @@ def validate_email_and_password(email: str, password: str) -> str:
             detail=f"密码至少需要 {settings.auth.password_min_length} 个字符",
         )
     return normalized
+
+
+def normalize_invitation_code(code: str | None) -> str:
+    return (code or "").strip().upper()
+
+
+def generate_invitation_code() -> str:
+    groups = [
+        "".join(secrets.choice(INVITATION_CODE_ALPHABET) for _ in range(4))
+        for _ in range(4)
+    ]
+    return f"PI-{'-'.join(groups)}"
 
 
 def get_request_ip(request: Request) -> str | None:
@@ -297,20 +322,30 @@ def assert_chat_owner(session_id: str, user_id: str) -> dict | None:
 
 
 @app.post("/auth/register")
-async def register(req: AuthRequest, request: Request, response: Response):
+async def register(req: RegisterRequest, request: Request, response: Response):
     if not settings.auth.public_registration_enabled:
         raise HTTPException(status_code=403, detail="当前不开放注册")
     normalized = validate_email_and_password(req.email, req.password)
+    invitation_code = normalize_invitation_code(req.invitation_code)
+    if not invitation_code:
+        raise HTTPException(status_code=400, detail="请填写邀请码")
     try:
-        if get_user_by_email(normalized):
-            raise HTTPException(status_code=409, detail="该邮箱已注册")
-        user = create_user(
+        user, error = create_user_with_invitation(
             req.email.strip(),
             normalized,
             hash_password(req.password),
+            hash_session_token(invitation_code),
             role="user",
             email_verified=not settings.auth.require_email_verification,
         )
+        if error == "email_exists":
+            raise HTTPException(status_code=409, detail="该邮箱已注册")
+        if error == "invalid_invitation_code":
+            raise HTTPException(status_code=400, detail="邀请码无效")
+        if error == "invitation_code_exhausted":
+            raise HTTPException(status_code=400, detail="邀请码使用次数已用完")
+        if not user:
+            raise HTTPException(status_code=400, detail="注册失败")
         create_login_session(user, request, response)
         return {"user": public_user(user)}
     except DatabaseError as exc:
@@ -496,6 +531,48 @@ async def admin_list_users(
             "page": safe_page,
             "pages": math.ceil(total / safe_limit) if total > 0 else 1,
         }
+    except DatabaseError as exc:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+
+
+@app.get("/admin/invitation-codes")
+async def admin_list_invitation_codes(admin: dict = Depends(require_admin_user)):
+    try:
+        return {"codes": list_invitation_codes()}
+    except DatabaseError as exc:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+
+
+@app.post("/admin/invitation-codes")
+async def admin_create_invitation_code(
+    req: InvitationCodeCreateRequest,
+    admin: dict = Depends(require_admin_user),
+):
+    if req.max_uses < 1 or req.max_uses > 10000:
+        raise HTTPException(status_code=400, detail="可使用次数必须在 1 到 10000 之间")
+    code = generate_invitation_code()
+    try:
+        invitation = create_invitation_code(
+            hash_session_token(normalize_invitation_code(code)),
+            code,
+            code[:7],
+            req.max_uses,
+            admin["id"],
+        )
+        return {"code": code, "invitation": invitation}
+    except DatabaseError as exc:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+
+
+@app.delete("/admin/invitation-codes/{code_id}")
+async def admin_delete_invitation_code(
+    code_id: str,
+    admin: dict = Depends(require_admin_user),
+):
+    try:
+        if not delete_invitation_code(code_id):
+            raise HTTPException(status_code=404, detail="邀请码不存在")
+        return {"ok": True}
     except DatabaseError as exc:
         raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
 

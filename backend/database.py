@@ -42,6 +42,16 @@ def _normalize_session_row(row: dict | None) -> dict | None:
     return normalized
 
 
+def _normalize_invitation_code_row(row: dict | None) -> dict | None:
+    if not row:
+        return None
+    normalized = dict(row)
+    normalized["id"] = str(normalized["id"])
+    if normalized.get("created_by") is not None:
+        normalized["created_by"] = str(normalized["created_by"])
+    return normalized
+
+
 def _run_with_retry(
     operation: Callable[[], T],
     context: str,
@@ -256,6 +266,63 @@ def create_user(
         return _normalize_user_row(user)
 
     return _run_with_retry(operation, f"create_user:{email_normalized}")
+
+
+def create_user_with_invitation(
+    email: str,
+    email_normalized: str,
+    password_hash: str,
+    invitation_code_hash: str,
+    role: str = "user",
+    email_verified: bool = True,
+) -> tuple[dict | None, str | None]:
+    def operation() -> tuple[dict | None, str | None]:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM users WHERE email_normalized = %s",
+                    (email_normalized,),
+                )
+                if cur.fetchone():
+                    return None, "email_exists"
+
+                cur.execute(
+                    """
+                    SELECT id, max_uses, used_count, is_active
+                    FROM invitation_codes
+                    WHERE code_hash = %s
+                    FOR UPDATE
+                    """,
+                    (invitation_code_hash,),
+                )
+                invitation = cur.fetchone()
+                if not invitation or not invitation["is_active"]:
+                    return None, "invalid_invitation_code"
+                if invitation["used_count"] >= invitation["max_uses"]:
+                    return None, "invitation_code_exhausted"
+
+                cur.execute(
+                    """
+                    INSERT INTO users (email, email_normalized, password_hash, role, email_verified)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING *
+                    """,
+                    (email, email_normalized, password_hash, role, email_verified),
+                )
+                user = cur.fetchone()
+                cur.execute(
+                    """
+                    UPDATE invitation_codes
+                    SET used_count = used_count + 1,
+                        last_used_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (invitation["id"],),
+                )
+            conn.commit()
+        return _normalize_user_row(user), None
+
+    return _run_with_retry(operation, f"create_user_with_invitation:{email_normalized}")
 
 
 def get_user_by_email(email_normalized: str) -> dict | None:
@@ -540,6 +607,76 @@ def delete_user(user_id: str) -> bool:
         return deleted
 
     return _run_with_retry(operation, f"delete_user:{user_id}")
+
+
+def create_invitation_code(
+    code_hash: str,
+    code_text: str,
+    code_prefix: str,
+    max_uses: int,
+    created_by: str,
+) -> dict:
+    def operation() -> dict:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO invitation_codes (code_hash, code_text, code_prefix, max_uses, created_by)
+                    VALUES (%s, %s, %s, %s, %s)
+                    RETURNING id, code_text, code_prefix, max_uses, used_count, is_active,
+                              created_by, created_at, last_used_at
+                    """,
+                    (code_hash, code_text, code_prefix, max_uses, created_by),
+                )
+                invitation = cur.fetchone()
+            conn.commit()
+        return _normalize_invitation_code_row(invitation)
+
+    return _run_with_retry(operation, "create_invitation_code")
+
+
+def list_invitation_codes(limit: int = 50) -> list[dict]:
+    def operation() -> list[dict]:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT invitation_codes.id,
+                           invitation_codes.code_text,
+                           invitation_codes.code_prefix,
+                           invitation_codes.max_uses,
+                           invitation_codes.used_count,
+                           invitation_codes.is_active,
+                           invitation_codes.created_by,
+                           invitation_codes.created_at,
+                           invitation_codes.last_used_at,
+                           users.email AS created_by_email
+                    FROM invitation_codes
+                    LEFT JOIN users ON users.id = invitation_codes.created_by
+                    ORDER BY invitation_codes.created_at DESC
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                rows = cur.fetchall()
+        return [_normalize_invitation_code_row(row) for row in rows]
+
+    return _run_with_retry(operation, "list_invitation_codes")
+
+
+def delete_invitation_code(code_id: str) -> bool:
+    def operation() -> bool:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "DELETE FROM invitation_codes WHERE id = %s RETURNING id",
+                    (code_id,),
+                )
+                deleted = cur.fetchone() is not None
+            conn.commit()
+        return deleted
+
+    return _run_with_retry(operation, f"delete_invitation_code:{code_id}")
 
 
 def get_paper_marks(user_id: str, paper_ids: list[str]) -> dict[str, dict]:
