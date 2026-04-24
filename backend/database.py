@@ -52,6 +52,14 @@ def _normalize_invitation_code_row(row: dict | None) -> dict | None:
     return normalized
 
 
+def _normalize_feishu_settings_row(row: dict | None) -> dict | None:
+    if not row:
+        return None
+    normalized = dict(row)
+    normalized["user_id"] = str(normalized["user_id"])
+    return normalized
+
+
 def _run_with_retry(
     operation: Callable[[], T],
     context: str,
@@ -860,7 +868,7 @@ def get_paper_marks(user_id: str, paper_ids: list[str]) -> dict[str, dict]:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT paper_id, viewed, liked, viewed_at, liked_at, updated_at
+                    SELECT paper_id, viewed, liked, favorited, viewed_at, liked_at, favorited_at, updated_at
                     FROM paper_marks
                     WHERE user_id = %s AND paper_id = ANY(%s)
                     """,
@@ -871,8 +879,10 @@ def get_paper_marks(user_id: str, paper_ids: list[str]) -> dict[str, dict]:
             row["paper_id"]: {
                 "viewed": bool(row["viewed"]),
                 "liked": bool(row["liked"]),
+                "favorited": bool(row["favorited"]),
                 "viewed_at": row["viewed_at"],
                 "liked_at": row["liked_at"],
+                "favorited_at": row["favorited_at"],
                 "updated_at": row["updated_at"],
             }
             for row in rows
@@ -889,14 +899,17 @@ def list_marked_papers(
     limit: int,
 ) -> tuple[list[dict], int]:
     filter_clauses = {
-        "all": "(pm.viewed = TRUE OR pm.liked = TRUE)",
+        "all": "(pm.viewed = TRUE OR pm.liked = TRUE OR pm.favorited = TRUE)",
         "viewed": "pm.viewed = TRUE",
         "liked": "pm.liked = TRUE",
+        "favorited": "pm.favorited = TRUE",
     }
     sort_clauses = {
         "viewed_at": "pm.viewed_at DESC NULLS LAST, pm.updated_at DESC",
         "liked_at": "pm.liked_at DESC NULLS LAST, pm.updated_at DESC",
-        "liked_first": "pm.liked DESC, pm.liked_at DESC NULLS LAST, pm.viewed_at DESC NULLS LAST, pm.updated_at DESC",
+        "favorited_at": "pm.favorited_at DESC NULLS LAST, pm.updated_at DESC",
+        "favorited_first": "pm.favorited DESC, pm.favorited_at DESC NULLS LAST, pm.liked_at DESC NULLS LAST, pm.viewed_at DESC NULLS LAST, pm.updated_at DESC",
+        "liked_first": "pm.favorited DESC, pm.favorited_at DESC NULLS LAST, pm.liked_at DESC NULLS LAST, pm.viewed_at DESC NULLS LAST, pm.updated_at DESC",
         "updated_at": "pm.updated_at DESC",
         "title": "LOWER(p.title) ASC NULLS LAST",
     }
@@ -920,8 +933,10 @@ def list_marked_papers(
                         p.created_at,
                         pm.viewed,
                         pm.liked,
+                        pm.favorited,
                         pm.viewed_at,
                         pm.liked_at,
+                        pm.favorited_at,
                         pm.updated_at AS mark_updated_at
                     FROM paper_marks pm
                     JOIN papers p ON p.id = pm.paper_id
@@ -965,8 +980,10 @@ def list_marked_papers(
                 "mark": {
                     "viewed": bool(row["viewed"]),
                     "liked": bool(row["liked"]),
+                    "favorited": bool(row["favorited"]),
                     "viewed_at": row["viewed_at"],
                     "liked_at": row["liked_at"],
+                    "favorited_at": row["favorited_at"],
                     "updated_at": row["mark_updated_at"],
                 },
             }
@@ -977,38 +994,140 @@ def list_marked_papers(
     return _run_with_retry(operation, f"list_marked_papers:{user_id}:{mark_filter}:{sort}")
 
 
-def set_paper_mark(
+def get_feishu_settings(user_id: str) -> dict | None:
+    def operation() -> dict | None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT user_id, webhook_url, daily_push_count, enabled,
+                           last_tested_at, last_test_status, last_test_error,
+                           created_at, updated_at
+                    FROM user_feishu_settings
+                    WHERE user_id = %s
+                    """,
+                    (user_id,),
+                )
+                return _normalize_feishu_settings_row(cur.fetchone())
+
+    return _run_with_retry(operation, f"get_feishu_settings:{user_id}")
+
+
+def upsert_feishu_settings(
     user_id: str,
-    paper_id: str,
-    viewed: bool | None = None,
-    liked: bool | None = None,
+    webhook_url: str,
+    daily_push_count: int,
+    enabled: bool,
 ) -> dict:
     def operation() -> dict:
         with _get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
                     """
-                    SELECT viewed, liked
+                    INSERT INTO user_feishu_settings (
+                        user_id, webhook_url, daily_push_count, enabled, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, NOW())
+                    ON CONFLICT (user_id) DO UPDATE SET
+                        webhook_url = EXCLUDED.webhook_url,
+                        daily_push_count = EXCLUDED.daily_push_count,
+                        enabled = EXCLUDED.enabled,
+                        updated_at = NOW()
+                    RETURNING user_id, webhook_url, daily_push_count, enabled,
+                              last_tested_at, last_test_status, last_test_error,
+                              created_at, updated_at
+                    """,
+                    (user_id, webhook_url, daily_push_count, enabled),
+                )
+                row = cur.fetchone()
+            conn.commit()
+        return _normalize_feishu_settings_row(row)
+
+    return _run_with_retry(operation, f"upsert_feishu_settings:{user_id}")
+
+
+def update_feishu_test_result(user_id: str, status: str, error: str | None = None) -> None:
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE user_feishu_settings
+                    SET last_tested_at = NOW(),
+                        last_test_status = %s,
+                        last_test_error = %s,
+                        updated_at = NOW()
+                    WHERE user_id = %s
+                    """,
+                    (status, error, user_id),
+                )
+            conn.commit()
+
+    _run_with_retry(operation, f"update_feishu_test_result:{user_id}")
+
+
+def list_enabled_feishu_settings() -> list[dict]:
+    def operation() -> list[dict]:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT user_id, webhook_url, daily_push_count, enabled,
+                           user_feishu_settings.last_tested_at,
+                           user_feishu_settings.last_test_status,
+                           user_feishu_settings.last_test_error,
+                           user_feishu_settings.created_at,
+                           user_feishu_settings.updated_at
+                    FROM user_feishu_settings
+                    JOIN users ON users.id = user_feishu_settings.user_id
+                    WHERE user_feishu_settings.enabled = TRUE
+                      AND user_feishu_settings.webhook_url <> ''
+                      AND users.is_active = TRUE
+                    ORDER BY user_feishu_settings.updated_at DESC
+                    """
+                )
+                rows = cur.fetchall()
+        return [_normalize_feishu_settings_row(row) for row in rows]
+
+    return _run_with_retry(operation, "list_enabled_feishu_settings")
+
+
+def set_paper_mark(
+    user_id: str,
+    paper_id: str,
+    viewed: bool | None = None,
+    liked: bool | None = None,
+    favorited: bool | None = None,
+) -> dict:
+    def operation() -> dict:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT viewed, liked, favorited
                     FROM paper_marks
                     WHERE user_id = %s AND paper_id = %s
                     """,
                     (user_id, paper_id),
                 )
-                existing = cur.fetchone() or {"viewed": False, "liked": False}
+                existing = cur.fetchone() or {"viewed": False, "liked": False, "favorited": False}
                 next_viewed = bool(existing["viewed"]) if viewed is None else viewed
                 next_liked = bool(existing["liked"]) if liked is None else liked
-                if next_liked:
+                next_favorited = bool(existing["favorited"]) if favorited is None else favorited
+                if next_liked or next_favorited:
                     next_viewed = True
                 if not next_viewed:
                     next_liked = False
+                    next_favorited = False
 
                 cur.execute(
                     """
                     INSERT INTO paper_marks (
-                        user_id, paper_id, viewed, liked, viewed_at, liked_at, updated_at
+                        user_id, paper_id, viewed, liked, favorited, viewed_at, liked_at, favorited_at, updated_at
                     )
                     VALUES (
-                        %s, %s, %s, %s,
+                        %s, %s, %s, %s, %s,
+                        CASE WHEN %s THEN NOW() ELSE NULL END,
                         CASE WHEN %s THEN NOW() ELSE NULL END,
                         CASE WHEN %s THEN NOW() ELSE NULL END,
                         NOW()
@@ -1016,6 +1135,7 @@ def set_paper_mark(
                     ON CONFLICT (user_id, paper_id) DO UPDATE SET
                         viewed = EXCLUDED.viewed,
                         liked = EXCLUDED.liked,
+                        favorited = EXCLUDED.favorited,
                         viewed_at = CASE
                             WHEN EXCLUDED.viewed THEN COALESCE(paper_marks.viewed_at, NOW())
                             ELSE NULL
@@ -1024,10 +1144,23 @@ def set_paper_mark(
                             WHEN EXCLUDED.liked THEN COALESCE(paper_marks.liked_at, NOW())
                             ELSE NULL
                         END,
+                        favorited_at = CASE
+                            WHEN EXCLUDED.favorited THEN COALESCE(paper_marks.favorited_at, NOW())
+                            ELSE NULL
+                        END,
                         updated_at = NOW()
-                    RETURNING paper_id, viewed, liked, viewed_at, liked_at, updated_at
+                    RETURNING paper_id, viewed, liked, favorited, viewed_at, liked_at, favorited_at, updated_at
                     """,
-                    (user_id, paper_id, next_viewed, next_liked, next_viewed, next_liked),
+                    (
+                        user_id,
+                        paper_id,
+                        next_viewed,
+                        next_liked,
+                        next_favorited,
+                        next_viewed,
+                        next_liked,
+                        next_favorited,
+                    ),
                 )
                 row = cur.fetchone()
             conn.commit()
@@ -1035,8 +1168,10 @@ def set_paper_mark(
             "paper_id": row["paper_id"],
             "viewed": bool(row["viewed"]),
             "liked": bool(row["liked"]),
+            "favorited": bool(row["favorited"]),
             "viewed_at": row["viewed_at"],
             "liked_at": row["liked_at"],
+            "favorited_at": row["favorited_at"],
             "updated_at": row["updated_at"],
         }
 
@@ -1063,9 +1198,10 @@ def migrate_anonymous_data(user_id: str, anonymous_user_id: str | None, marks: d
                 for paper_id, mark in marks.items():
                     viewed = bool(mark.get("viewed"))
                     liked = bool(mark.get("liked"))
-                    if liked:
+                    favorited = bool(mark.get("favorited"))
+                    if liked or favorited:
                         viewed = True
-                    if not viewed and not liked:
+                    if not viewed and not liked and not favorited:
                         continue
                     cur.execute("SELECT 1 FROM papers WHERE id = %s", (paper_id,))
                     if not cur.fetchone():
@@ -1073,10 +1209,12 @@ def migrate_anonymous_data(user_id: str, anonymous_user_id: str | None, marks: d
                     cur.execute(
                         """
                         INSERT INTO paper_marks (
-                            user_id, paper_id, viewed, liked, viewed_at, liked_at, updated_at
+                            user_id, paper_id, viewed, liked, favorited,
+                            viewed_at, liked_at, favorited_at, updated_at
                         )
                         VALUES (
-                            %s, %s, %s, %s,
+                            %s, %s, %s, %s, %s,
+                            CASE WHEN %s THEN NOW() ELSE NULL END,
                             CASE WHEN %s THEN NOW() ELSE NULL END,
                             CASE WHEN %s THEN NOW() ELSE NULL END,
                             NOW()
@@ -1084,6 +1222,7 @@ def migrate_anonymous_data(user_id: str, anonymous_user_id: str | None, marks: d
                         ON CONFLICT (user_id, paper_id) DO UPDATE SET
                             viewed = paper_marks.viewed OR EXCLUDED.viewed,
                             liked = paper_marks.liked OR EXCLUDED.liked,
+                            favorited = paper_marks.favorited OR EXCLUDED.favorited,
                             viewed_at = CASE
                                 WHEN paper_marks.viewed OR EXCLUDED.viewed THEN COALESCE(paper_marks.viewed_at, NOW())
                                 ELSE NULL
@@ -1092,9 +1231,13 @@ def migrate_anonymous_data(user_id: str, anonymous_user_id: str | None, marks: d
                                 WHEN paper_marks.liked OR EXCLUDED.liked THEN COALESCE(paper_marks.liked_at, NOW())
                                 ELSE NULL
                             END,
+                            favorited_at = CASE
+                                WHEN paper_marks.favorited OR EXCLUDED.favorited THEN COALESCE(paper_marks.favorited_at, NOW())
+                                ELSE NULL
+                            END,
                             updated_at = NOW()
                         """,
-                        (user_id, paper_id, viewed, liked, viewed, liked),
+                        (user_id, paper_id, viewed, liked, favorited, viewed, liked, favorited),
                     )
                     migrated_marks += 1
             conn.commit()
@@ -1587,6 +1730,126 @@ def has_hf_daily_papers_for_date(daily_date: date) -> bool:
                 return cur.fetchone() is not None
 
     return _run_with_retry(operation, f"has_hf_daily_papers_for_date:{daily_date.isoformat()}")
+
+
+def _paper_from_hf_daily_row(row: dict) -> dict:
+    paper = {
+        "id": row["id"],
+        "title": row.get("title"),
+        "abstract": row.get("abstract"),
+        "keywords": row.get("keywords") or [],
+        "pdf": normalize_paper_pdf_url(row["id"], row.get("pdf")) or get_openreview_pdf_url(row["id"]),
+        "venue": row.get("venue"),
+        "primary_area": row.get("primary_area"),
+        "llm_response": row.get("llm_response"),
+        "created_at": row.get("created_at"),
+        "hf_daily": {
+            "daily_date": row.get("hf_daily_date"),
+            "rank": row.get("hf_daily_rank"),
+            "upvotes": row.get("hf_daily_upvotes"),
+            "thumbnail": row.get("hf_daily_thumbnail"),
+            "discussion_id": row.get("hf_daily_discussion_id"),
+            "project_page": row.get("hf_daily_project_page"),
+            "github_repo": row.get("hf_daily_github_repo"),
+            "github_stars": row.get("hf_daily_github_stars"),
+            "num_comments": row.get("hf_daily_num_comments"),
+        },
+    }
+    return paper
+
+
+def select_daily_push_papers_for_user(user_id: str, daily_date: date, limit: int) -> list[dict]:
+    """Return the current v1 daily push candidates.
+
+    user_id is intentionally part of the signature so future recommendation
+    logic can personalize this selection without changing scheduler code.
+    """
+    del user_id
+    if limit <= 0:
+        return []
+
+    def operation() -> list[dict]:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT p.*,
+                           h.daily_date AS hf_daily_date,
+                           h.rank AS hf_daily_rank,
+                           h.upvotes AS hf_daily_upvotes,
+                           h.thumbnail AS hf_daily_thumbnail,
+                           h.discussion_id AS hf_daily_discussion_id,
+                           h.project_page AS hf_daily_project_page,
+                           h.github_repo AS hf_daily_github_repo,
+                           h.github_stars AS hf_daily_github_stars,
+                           h.num_comments AS hf_daily_num_comments
+                    FROM hf_daily_papers h
+                    JOIN papers p ON p.id = h.paper_id
+                    WHERE h.daily_date = %s
+                    ORDER BY h.rank ASC, h.upvotes DESC, p.title ASC, p.id ASC
+                    LIMIT %s
+                    """,
+                    (daily_date, limit),
+                )
+                rows = cur.fetchall()
+
+        papers = [_paper_from_hf_daily_row(row) for row in rows]
+        papers, _ = _load_keywords_for_papers(papers)
+        return papers
+
+    return _run_with_retry(
+        operation,
+        f"select_daily_push_papers_for_user:{daily_date.isoformat()}:{limit}",
+    )
+
+
+def has_successful_feishu_push(user_id: str, daily_date: date, paper_id: str) -> bool:
+    def operation() -> bool:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT 1
+                    FROM feishu_push_logs
+                    WHERE user_id = %s
+                      AND daily_date = %s
+                      AND paper_id = %s
+                      AND status = 'success'
+                    LIMIT 1
+                    """,
+                    (user_id, daily_date, paper_id),
+                )
+                return cur.fetchone() is not None
+
+    return _run_with_retry(operation, f"has_successful_feishu_push:{user_id}:{daily_date}:{paper_id}")
+
+
+def record_feishu_push_result(
+    user_id: str,
+    daily_date: date,
+    paper_id: str,
+    status: str,
+    error: str | None = None,
+) -> None:
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO feishu_push_logs (
+                        user_id, daily_date, paper_id, status, error, updated_at
+                    )
+                    VALUES (%s, %s, %s, %s, %s, NOW())
+                    ON CONFLICT (user_id, daily_date, paper_id) DO UPDATE SET
+                        status = EXCLUDED.status,
+                        error = EXCLUDED.error,
+                        updated_at = NOW()
+                    """,
+                    (user_id, daily_date, paper_id, status, error),
+                )
+            conn.commit()
+
+    _run_with_retry(operation, f"record_feishu_push_result:{user_id}:{daily_date}:{paper_id}:{status}")
 
 
 def get_hf_daily_papers(

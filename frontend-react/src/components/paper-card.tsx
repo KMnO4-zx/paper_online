@@ -1,4 +1,4 @@
-import { CalendarDays, Eye, Heart, Star, ThumbsUp } from 'lucide-react';
+import { Bookmark, CalendarDays, Eye, Heart, Star, ThumbsUp } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { RichContent } from '@/components/rich-content';
@@ -15,6 +15,8 @@ interface PaperCardProps {
   index: number;
   onOpen: (paper: Paper) => void;
 }
+
+const EMPTY_MARKS = { viewed: false, liked: false, favorited: false };
 
 function getConferenceColor(conference: string) {
   switch (conference) {
@@ -44,7 +46,7 @@ function getKeywordColor(index: number) {
 
 export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
   const { user, isLoading } = useAuth();
-  const [marks, setMarks] = useState({ viewed: false, liked: false });
+  const [marks, setMarks] = useState(EMPTY_MARKS);
   const [isLikeAnimating, setIsLikeAnimating] = useState(false);
   const keywords = normalizeKeywords(paper.keywords).slice(0, 6);
   const venue = getVenueParts(paper.venue);
@@ -53,7 +55,7 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
 
   useEffect(() => {
     let active = true;
-    setMarks({ viewed: false, liked: false });
+    setMarks(EMPTY_MARKS);
     if (isLoading || !user) {
       return () => {
         active = false;
@@ -62,12 +64,12 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
     void fetchPaperMarks([paper.id])
       .then((nextMarks) => {
         if (active) {
-          setMarks(nextMarks[paper.id] ?? { viewed: false, liked: false });
+          setMarks(nextMarks[paper.id] ?? EMPTY_MARKS);
         }
       })
       .catch(() => {
         if (active) {
-          setMarks({ viewed: false, liked: false });
+          setMarks(EMPTY_MARKS);
         }
       });
     return () => {
@@ -185,6 +187,26 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
           >
             <Heart className={`mr-1.5 h-3.5 w-3.5 ${isLikeAnimating ? 'animate-heart-beat' : ''} ${marks.liked ? 'fill-current' : ''}`} />
             {marks.liked ? '已点赞' : '点赞'}
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!requireLogin()) {
+                return;
+              }
+              void updatePaperMark(paper.id, { favorited: !marks.favorited }).then(setMarks);
+            }}
+            className={`rounded-full ${
+              marks.favorited
+                ? 'border-[#fed7aa] bg-[#fff7ed] text-[#ea580c]'
+                : 'border-[#dbe2ea] text-[#66768b]'
+            }`}
+          >
+            <Bookmark className={`mr-1.5 h-3.5 w-3.5 ${marks.favorited ? 'fill-current' : ''}`} />
+            {marks.favorited ? '已收藏' : '收藏'}
           </Button>
         </div>
       </div>

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, Eye, FileText, Heart, Loader2, Sparkles } from 'lucide-react';
+import { Bookmark, ChevronLeft, Eye, FileText, Heart, Loader2, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -17,6 +17,7 @@ interface PaperPageProps {
 
 const BACK_BUTTON_FADE_DISTANCE = 72;
 const BACK_BUTTON_MAX_TRANSLATE_Y = 8;
+const EMPTY_MARKS = { viewed: false, liked: false, favorited: false };
 
 export function PaperPage({ paperId }: PaperPageProps) {
   const { user, isLoading: isAuthLoading } = useAuth();
@@ -28,7 +29,7 @@ export function PaperPage({ paperId }: PaperPageProps) {
   const [analysisLoading, setAnalysisLoading] = useState(true);
   const [analysisStreaming, setAnalysisStreaming] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [marks, setMarks] = useState({ viewed: false, liked: false });
+  const [marks, setMarks] = useState(EMPTY_MARKS);
   const [isLikeAnimating, setIsLikeAnimating] = useState(false);
   const [backButtonProgress, setBackButtonProgress] = useState(0);
   const analysisRequestIdRef = useRef(0);
@@ -36,7 +37,7 @@ export function PaperPage({ paperId }: PaperPageProps) {
 
   useEffect(() => {
     let active = true;
-    setMarks({ viewed: false, liked: false });
+    setMarks(EMPTY_MARKS);
     if (isAuthLoading || !user) {
       return () => {
         active = false;
@@ -45,12 +46,12 @@ export function PaperPage({ paperId }: PaperPageProps) {
     void fetchPaperMarks([paperId])
       .then((nextMarks) => {
         if (active) {
-          setMarks(nextMarks[paperId] ?? { viewed: false, liked: false });
+          setMarks(nextMarks[paperId] ?? EMPTY_MARKS);
         }
       })
       .catch(() => {
         if (active) {
-          setMarks({ viewed: false, liked: false });
+          setMarks(EMPTY_MARKS);
         }
       });
     return () => {
@@ -316,6 +317,23 @@ export function PaperPage({ paperId }: PaperPageProps) {
                   >
                     <Heart className={`mr-1.5 h-4 w-4 ${isLikeAnimating ? 'animate-heart-beat' : ''} ${marks.liked ? 'fill-current' : ''}`} />
                     {marks.liked ? '已点赞' : '点赞'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className={`rounded-full ${
+                      marks.favorited
+                        ? 'border-[#fed7aa] bg-[#fff7ed] text-[#ea580c]'
+                        : 'border-[#dbe2ea] text-[#66768b]'
+                    }`}
+                    onClick={() => {
+                      if (!requireLogin()) {
+                        return;
+                      }
+                      void updatePaperMark(paperId, { favorited: !marks.favorited }).then(setMarks);
+                    }}
+                  >
+                    <Bookmark className={`mr-1.5 h-4 w-4 ${marks.favorited ? 'fill-current' : ''}`} />
+                    {marks.favorited ? '已收藏' : '收藏'}
                   </Button>
                 </div>
               </div>

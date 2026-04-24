@@ -16,6 +16,7 @@ export interface Paper {
   pdfUrl?: string;
   hasSeen?: boolean;
   isLiked?: boolean;
+  isFavorited?: boolean;
 }
 
 export interface HfDailyPaperMeta {
@@ -82,13 +83,15 @@ export interface OnlineCount {
 export interface PaperMark {
   viewed: boolean;
   liked: boolean;
+  favorited: boolean;
   viewed_at?: string | null;
   liked_at?: string | null;
+  favorited_at?: string | null;
   updated_at?: string | null;
 }
 
-export type MyPaperFilter = 'all' | 'viewed' | 'liked';
-export type MyPaperSort = 'viewed_at' | 'liked_at' | 'liked_first' | 'updated_at' | 'title';
+export type MyPaperFilter = 'all' | 'viewed' | 'liked' | 'favorited';
+export type MyPaperSort = 'viewed_at' | 'liked_at' | 'favorited_at' | 'favorited_first' | 'updated_at' | 'title';
 
 export interface MarkedPaperItem {
   paper: Paper;
@@ -114,6 +117,27 @@ export interface AuthUser {
 
 export interface AuthResponse {
   user: AuthUser;
+}
+
+export interface FeishuWebhookSettings {
+  configured: boolean;
+  webhook_url_masked?: string | null;
+  enabled: boolean;
+  daily_push_count: number;
+  last_tested_at?: string | null;
+  last_test_status?: string | null;
+  last_test_error?: string | null;
+}
+
+export interface FeishuWebhookSettingsPayload {
+  webhook_url?: string;
+  enabled: boolean;
+  daily_push_count: number;
+}
+
+export interface FeishuWebhookTestResponse {
+  ok: boolean;
+  result: Record<string, unknown>;
 }
 
 export interface AdminUser {

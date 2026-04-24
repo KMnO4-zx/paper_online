@@ -28,6 +28,14 @@ from llm import SiliconflowLLM, OpenRouterLLM, StepLLM, ArkPlanLLM
 from migrations import apply_migrations
 from utils import get_or_cache_paper_content, get_openreview_info, ReaderError, OpenReviewError, truncate_content_for_llm
 from hf_daily import sync_hf_daily_papers
+from feishu import (
+    FeishuWebhookError,
+    build_feishu_paper_card,
+    build_feishu_test_card,
+    mask_feishu_webhook_url,
+    send_feishu_payload,
+    validate_feishu_webhook_url,
+)
 from database import (
     DatabaseError,
     count_active_admins,
@@ -45,6 +53,7 @@ from database import (
     get_chat_sessions_for_account,
     get_conference_papers,
     get_hf_daily_papers,
+    get_feishu_settings,
     get_paper,
     get_paper_marks,
     get_presence_counts,
@@ -53,20 +62,26 @@ from database import (
     get_user_by_id,
     get_user_by_session_token_hash,
     has_hf_daily_papers_for_date,
+    has_successful_feishu_push,
     list_invitation_codes,
+    list_enabled_feishu_settings,
     list_marked_papers,
     list_users,
     migrate_anonymous_data,
     record_presence,
+    record_feishu_push_result,
     record_presence_snapshot,
     revoke_session,
     revoke_user_sessions,
     save_chat_message,
     save_paper,
     search_all_papers,
+    select_daily_push_papers_for_user,
     set_paper_mark,
+    update_feishu_test_result,
     update_llm_response,
     update_invitation_code_max_uses,
+    upsert_feishu_settings,
     update_user_admin_fields,
     update_user_last_login,
     update_user_password,
@@ -84,6 +99,7 @@ background_analyzer = BackgroundAnalyzer(llm, check_interval=settings.background
 background_task = None
 presence_snapshot_task = None
 hf_daily_task = None
+feishu_push_task = None
 hf_daily_analysis_tasks: set[asyncio.Task] = set()
 
 
@@ -123,6 +139,21 @@ def get_hf_daily_fetch_time() -> datetime_time:
     return datetime_time(hour=22, minute=0)
 
 
+def get_feishu_push_time() -> datetime_time:
+    raw_value = settings.feishu_notifications.push_time.strip()
+    try:
+        hour_text, minute_text = raw_value.split(":", 1)
+        hour = int(hour_text)
+        minute = int(minute_text)
+        if 0 <= hour <= 23 and 0 <= minute <= 59:
+            return datetime_time(hour=hour, minute=minute)
+    except (ValueError, AttributeError):
+        pass
+
+    logger.warning("Feishu push_time 无效，回退到 10:00: %s", raw_value)
+    return datetime_time(hour=10, minute=0)
+
+
 async def analyze_hf_daily_papers(paper_ids: list[str]) -> None:
     if not paper_ids:
         return
@@ -160,14 +191,131 @@ def schedule_hf_daily_analysis(paper_ids: list[str]) -> None:
 async def sync_hf_daily_once() -> dict:
     tz = get_hf_daily_timezone()
     daily_date = datetime.now(tz).date()
+    top_n = max(settings.hf_daily.top_n, settings.feishu_notifications.max_daily_push_count)
     result = await asyncio.to_thread(
         sync_hf_daily_papers,
         settings.hf_daily.api_url,
-        settings.hf_daily.top_n,
+        top_n,
         daily_date,
     )
     schedule_hf_daily_analysis(result.get("analyzable_paper_ids", []))
     return result
+
+
+async def ensure_paper_has_analysis(paper: dict) -> dict | None:
+    if paper.get("llm_response"):
+        return paper
+    if not llm.is_configured():
+        logger.warning("飞书推送跳过未分析论文，LLM 未配置: %s", paper.get("id"))
+        return None
+
+    paper_id = paper["id"]
+    ok = await background_analyzer.analyze_paper(paper_id)
+    if not ok:
+        return None
+    refreshed = await asyncio.to_thread(get_paper, paper_id)
+    if not refreshed or not refreshed.get("llm_response"):
+        return None
+    paper["llm_response"] = refreshed["llm_response"]
+    return paper
+
+
+async def push_feishu_notifications_for_date(daily_date) -> None:
+    users = await asyncio.to_thread(list_enabled_feishu_settings)
+    if not users:
+        logger.info("Feishu 每日推送跳过：没有启用用户")
+        return
+
+    max_count = max(1, min(settings.feishu_notifications.max_daily_push_count, 5))
+    for setting in users:
+        user_id = setting["user_id"]
+        push_count = max(1, min(int(setting.get("daily_push_count") or 1), max_count))
+        papers = await asyncio.to_thread(
+            select_daily_push_papers_for_user,
+            user_id,
+            daily_date,
+            push_count,
+        )
+        for paper in papers:
+            paper_id = paper["id"]
+            already_sent = await asyncio.to_thread(
+                has_successful_feishu_push,
+                user_id,
+                daily_date,
+                paper_id,
+            )
+            if already_sent:
+                continue
+
+            analyzed_paper = await ensure_paper_has_analysis(paper)
+            if not analyzed_paper:
+                await asyncio.to_thread(
+                    record_feishu_push_result,
+                    user_id,
+                    daily_date,
+                    paper_id,
+                    "failed",
+                    "AI analysis is not available",
+                )
+                continue
+
+            try:
+                payload = build_feishu_paper_card(analyzed_paper, daily_date)
+                await asyncio.to_thread(send_feishu_payload, setting["webhook_url"], payload)
+                await asyncio.to_thread(
+                    record_feishu_push_result,
+                    user_id,
+                    daily_date,
+                    paper_id,
+                    "success",
+                    None,
+                )
+            except Exception as exc:
+                logger.warning(
+                    "Feishu 每日推送失败: user=%s paper=%s error=%s",
+                    user_id,
+                    paper_id,
+                    exc,
+                )
+                await asyncio.to_thread(
+                    record_feishu_push_result,
+                    user_id,
+                    daily_date,
+                    paper_id,
+                    "failed",
+                    str(exc)[:500],
+                )
+
+
+async def run_feishu_push_scheduler():
+    logger.info(
+        "Feishu 每日推送任务启动: enabled=%s time=%s timezone=%s",
+        settings.feishu_notifications.enabled,
+        settings.feishu_notifications.push_time,
+        settings.hf_daily.timezone,
+    )
+    while True:
+        tz = get_hf_daily_timezone()
+        push_time = get_feishu_push_time()
+        now = datetime.now(tz)
+        today_run_at = datetime.combine(now.date(), push_time, tzinfo=tz)
+
+        try:
+            if now >= today_run_at:
+                target_date = now.date() - timedelta(days=1)
+                await push_feishu_notifications_for_date(target_date)
+                now = datetime.now(tz)
+
+            next_run_date = now.date()
+            if now >= datetime.combine(next_run_date, push_time, tzinfo=tz):
+                next_run_date = next_run_date + timedelta(days=1)
+            next_run_at = datetime.combine(next_run_date, push_time, tzinfo=tz)
+            await asyncio.sleep(max((next_run_at - now).total_seconds(), 60))
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            logger.warning("Feishu 每日推送任务失败，1 小时后重试: %s", exc)
+            await asyncio.sleep(3600)
 
 
 async def run_hf_daily_scheduler():
@@ -224,7 +372,7 @@ def ensure_llm_configured() -> None:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global background_task, presence_snapshot_task, hf_daily_task
+    global background_task, presence_snapshot_task, hf_daily_task, feishu_push_task
     try:
         await asyncio.to_thread(apply_migrations)
     except Exception as exc:
@@ -249,11 +397,15 @@ async def lifespan(app: FastAPI):
         hf_daily_task = asyncio.create_task(run_hf_daily_scheduler())
     else:
         logger.info("HF Daily 定时任务未启用")
+    if settings.feishu_notifications.enabled:
+        feishu_push_task = asyncio.create_task(run_feishu_push_scheduler())
+    else:
+        logger.info("Feishu 每日推送任务未启用")
 
     yield
 
     background_analyzer.stop()
-    for task in (background_task, presence_snapshot_task, hf_daily_task, *hf_daily_analysis_tasks):
+    for task in (background_task, presence_snapshot_task, hf_daily_task, feishu_push_task, *hf_daily_analysis_tasks):
         if not task:
             continue
         task.cancel()
@@ -297,6 +449,7 @@ class ChangePasswordRequest(BaseModel):
 class PaperMarkPayload(BaseModel):
     viewed: bool | None = None
     liked: bool | None = None
+    favorited: bool | None = None
 
 
 class AnonymousMigrationRequest(BaseModel):
@@ -326,6 +479,12 @@ class InvitationCodeUpdateRequest(BaseModel):
     max_uses: int
 
 
+class FeishuWebhookSettingsRequest(BaseModel):
+    webhook_url: str | None = None
+    daily_push_count: int = 3
+    enabled: bool = True
+
+
 def public_user(user: dict) -> dict:
     return {
         "id": user["id"],
@@ -335,6 +494,28 @@ def public_user(user: dict) -> dict:
         "email_verified": user["email_verified"],
         "created_at": user.get("created_at"),
         "last_login_at": user.get("last_login_at"),
+    }
+
+
+def public_feishu_settings(settings_row: dict | None) -> dict:
+    if not settings_row:
+        return {
+            "configured": False,
+            "webhook_url_masked": None,
+            "enabled": False,
+            "daily_push_count": 3,
+            "last_tested_at": None,
+            "last_test_status": None,
+            "last_test_error": None,
+        }
+    return {
+        "configured": True,
+        "webhook_url_masked": mask_feishu_webhook_url(settings_row.get("webhook_url")),
+        "enabled": bool(settings_row.get("enabled")),
+        "daily_push_count": settings_row.get("daily_push_count") or 3,
+        "last_tested_at": settings_row.get("last_tested_at"),
+        "last_test_status": settings_row.get("last_test_status"),
+        "last_test_error": settings_row.get("last_test_error"),
     }
 
 
@@ -578,6 +759,71 @@ async def list_my_paper_marks(request: Request, paper_ids: str = ""):
         raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
 
 
+@app.get("/me/feishu-webhook")
+async def get_my_feishu_webhook(user: dict = Depends(require_current_user)):
+    try:
+        return public_feishu_settings(get_feishu_settings(user["id"]))
+    except DatabaseError as exc:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+
+
+@app.put("/me/feishu-webhook")
+async def update_my_feishu_webhook(
+    req: FeishuWebhookSettingsRequest,
+    user: dict = Depends(require_current_user),
+):
+    max_count = max(1, min(settings.feishu_notifications.max_daily_push_count, 5))
+    if not 1 <= req.daily_push_count <= max_count:
+        raise HTTPException(status_code=400, detail=f"每日推送篇数需要在 1 到 {max_count} 之间")
+
+    try:
+        existing = get_feishu_settings(user["id"])
+        raw_webhook_url = (req.webhook_url or "").strip()
+        if raw_webhook_url:
+            webhook_url = validate_feishu_webhook_url(raw_webhook_url)
+        elif existing:
+            webhook_url = existing["webhook_url"]
+        else:
+            raise HTTPException(status_code=400, detail="请先填写飞书 webhook URL")
+
+        updated = upsert_feishu_settings(
+            user["id"],
+            webhook_url,
+            req.daily_push_count,
+            req.enabled,
+        )
+        return public_feishu_settings(updated)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except DatabaseError as exc:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+
+
+@app.post("/me/feishu-webhook/test")
+async def test_my_feishu_webhook(user: dict = Depends(require_current_user)):
+    try:
+        settings_row = get_feishu_settings(user["id"])
+        if not settings_row:
+            raise HTTPException(status_code=400, detail="请先保存飞书 webhook URL")
+        result = await asyncio.to_thread(
+            send_feishu_payload,
+            settings_row["webhook_url"],
+            build_feishu_test_card(),
+        )
+        await asyncio.to_thread(update_feishu_test_result, user["id"], "success", None)
+        return {"ok": True, "result": result}
+    except HTTPException:
+        raise
+    except FeishuWebhookError as exc:
+        try:
+            await asyncio.to_thread(update_feishu_test_result, user["id"], "failed", str(exc)[:500])
+        except DatabaseError:
+            pass
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except DatabaseError as exc:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+
+
 @app.get("/me/papers")
 async def list_my_papers(
     page: int = 1,
@@ -586,9 +832,9 @@ async def list_my_papers(
     sort: str = "viewed_at",
     user: dict = Depends(require_current_user),
 ):
-    if filter not in {"all", "viewed", "liked"}:
-        raise HTTPException(status_code=400, detail="filter must be all, viewed, or liked")
-    if sort not in {"viewed_at", "liked_at", "liked_first", "updated_at", "title"}:
+    if filter not in {"all", "viewed", "liked", "favorited"}:
+        raise HTTPException(status_code=400, detail="filter must be all, viewed, liked, or favorited")
+    if sort not in {"viewed_at", "liked_at", "liked_first", "favorited_at", "favorited_first", "updated_at", "title"}:
         raise HTTPException(status_code=400, detail="unsupported sort")
 
     safe_page = max(page, 1)
@@ -614,7 +860,13 @@ async def update_my_paper_mark(
     user: dict = Depends(require_current_user),
 ):
     try:
-        return set_paper_mark(user["id"], paper_id, viewed=req.viewed, liked=req.liked)
+        return set_paper_mark(
+            user["id"],
+            paper_id,
+            viewed=req.viewed,
+            liked=req.liked,
+            favorited=req.favorited,
+        )
     except DatabaseError as exc:
         raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
 

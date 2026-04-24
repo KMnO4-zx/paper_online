@@ -43,6 +43,13 @@ class HfDailyConfig:
 
 
 @dataclass(frozen=True)
+class FeishuNotificationsConfig:
+    enabled: bool = True
+    push_time: str = "10:00"
+    max_daily_push_count: int = 5
+
+
+@dataclass(frozen=True)
 class CorsConfig:
     allowed_origins: tuple[str, ...] = ("http://127.0.0.1:5173", "http://localhost:5173")
 
@@ -90,6 +97,7 @@ class AppConfig:
     presence: PresenceConfig
     background_analysis: BackgroundAnalysisConfig
     hf_daily: HfDailyConfig
+    feishu_notifications: FeishuNotificationsConfig
     cors: CorsConfig
 
 
@@ -139,6 +147,7 @@ def load_app_config() -> AppConfig:
     raw_presence = raw.get("presence") if isinstance(raw.get("presence"), dict) else {}
     raw_background_analysis = raw.get("background_analysis") if isinstance(raw.get("background_analysis"), dict) else {}
     raw_hf_daily = raw.get("hf_daily") if isinstance(raw.get("hf_daily"), dict) else {}
+    raw_feishu_notifications = raw.get("feishu_notifications") if isinstance(raw.get("feishu_notifications"), dict) else {}
     raw_cors = raw.get("cors") if isinstance(raw.get("cors"), dict) else {}
     raw_database = raw.get("database") if isinstance(raw.get("database"), dict) else {}
     raw_llm = raw.get("llm") if isinstance(raw.get("llm"), dict) else {}
@@ -230,6 +239,22 @@ def load_app_config() -> AppConfig:
         ),
     )
 
+    default_feishu_notifications = FeishuNotificationsConfig()
+    feishu_notifications = FeishuNotificationsConfig(
+        enabled=_as_bool(
+            raw_feishu_notifications.get("enabled"),
+            default_feishu_notifications.enabled,
+        ),
+        push_time=_as_str(
+            raw_feishu_notifications.get("push_time"),
+            default_feishu_notifications.push_time,
+        ),
+        max_daily_push_count=_as_int(
+            raw_feishu_notifications.get("max_daily_push_count"),
+            default_feishu_notifications.max_daily_push_count,
+        ),
+    )
+
     default_cors = CorsConfig()
     cors = CorsConfig(
         allowed_origins=_as_origins(raw_cors.get("allowed_origins"), default_cors.allowed_origins),
@@ -258,6 +283,7 @@ def load_app_config() -> AppConfig:
         presence=presence,
         background_analysis=background_analysis,
         hf_daily=hf_daily,
+        feishu_notifications=feishu_notifications,
         cors=cors,
     )
 

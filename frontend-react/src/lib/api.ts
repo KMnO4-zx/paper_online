@@ -7,6 +7,9 @@ import type {
   AuthResponse,
   ChatMessage,
   ChatSessionSummary,
+  FeishuWebhookSettings,
+  FeishuWebhookSettingsPayload,
+  FeishuWebhookTestResponse,
   MarkedPaperListResponse,
   MyPaperFilter,
   MyPaperSort,
@@ -206,6 +209,23 @@ export async function fetchMyPapers(
     limit: '12',
   });
   return apiFetch<MarkedPaperListResponse>(`/me/papers?${params.toString()}`);
+}
+
+export async function fetchFeishuWebhookSettings(): Promise<FeishuWebhookSettings> {
+  return apiFetch<FeishuWebhookSettings>('/me/feishu-webhook');
+}
+
+export async function updateFeishuWebhookSettings(
+  payload: FeishuWebhookSettingsPayload,
+): Promise<FeishuWebhookSettings> {
+  return apiFetch<FeishuWebhookSettings>('/me/feishu-webhook', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export async function testFeishuWebhook(): Promise<FeishuWebhookTestResponse> {
+  return apiFetch<FeishuWebhookTestResponse>('/me/feishu-webhook/test', { method: 'POST' });
 }
 
 export async function updatePaperMark(
