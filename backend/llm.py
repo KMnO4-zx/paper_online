@@ -1,10 +1,9 @@
 from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError
-import os
 import asyncio
+from config import settings
 from prompt import PAPER_ANALYSIS_PROMPT
 
-from dotenv import load_dotenv, find_dotenv
-_ = load_dotenv(find_dotenv())
+MISSING_API_KEY_PLACEHOLDER = "missing-api-key"
 
 async def retry_on_error(func, max_retries=3, delay=1.0):
     """Simple retry wrapper for async functions"""
@@ -18,9 +17,12 @@ async def retry_on_error(func, max_retries=3, delay=1.0):
 
 class BaseLLM:
     def __init__(self, model: str, api_key: str = None, base_url: str = None):
-        self.api_key = api_key if api_key else os.getenv("OPENAI_API_KEY")
+        self.api_key = api_key if api_key else settings.llm.openai_api_key
         self.model = model
-        self.client = AsyncOpenAI(api_key=self.api_key, base_url=base_url)
+        self.client = AsyncOpenAI(api_key=self.api_key or MISSING_API_KEY_PLACEHOLDER, base_url=base_url)
+
+    def is_configured(self) -> bool:
+        return bool(self.api_key and self.api_key != MISSING_API_KEY_PLACEHOLDER)
 
     async def get_response(self, prompt: str, **kwargs) -> str:
         async def _call():
@@ -75,18 +77,18 @@ class BaseLLM:
     
 class SiliconflowLLM(BaseLLM):
     def __init__(self, api_key: str = None, base_url: str = None, model: str = "Pro/MiniMaxAI/MiniMax-M2.5"):
-        self.api_key = api_key if api_key else os.getenv("SILICONFLOW_API_KEY")
+        self.api_key = api_key if api_key else settings.llm.siliconflow_api_key
         self.base_url = base_url if base_url else "https://api.siliconflow.cn/v1"
         self.model = model
-        self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+        self.client = AsyncOpenAI(api_key=self.api_key or MISSING_API_KEY_PLACEHOLDER, base_url=self.base_url)
 
 class OpenRouterLLM(BaseLLM):
     def __init__(self, api_key: str = None, base_url: str = None, model: str = "stepfun/step-3.5-flash:free", max_completion_tokens: int = 12000):
-        self.api_key = api_key if api_key else os.getenv("OPEN_ROUTER_API_KEY")
+        self.api_key = api_key if api_key else settings.llm.open_router_api_key
         self.base_url = base_url if base_url else "https://openrouter.ai/api/v1"
         self.model = model
         self.max_completion_tokens = max_completion_tokens
-        self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+        self.client = AsyncOpenAI(api_key=self.api_key or MISSING_API_KEY_PLACEHOLDER, base_url=self.base_url)
 
     async def get_response(self, prompt: str, **kwargs) -> str:
         kwargs.setdefault('max_completion_tokens', self.max_completion_tokens)
@@ -108,17 +110,17 @@ class OpenRouterLLM(BaseLLM):
 
 class StepLLM(BaseLLM):
     def __init__(self, api_key: str = None, base_url: str = None, model: str = "step-3.5-flash-2603"):
-        self.api_key = api_key if api_key else os.getenv("STEP_API_KEY")
-        self.base_url = base_url if base_url else "https://api.stepfun.com/v1"
+        self.api_key = api_key if api_key else settings.llm.step_api_key
+        self.base_url = base_url if base_url else settings.llm.step_base_url
         self.model = model
-        self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+        self.client = AsyncOpenAI(api_key=self.api_key or MISSING_API_KEY_PLACEHOLDER, base_url=self.base_url)
 
 class ArkPlanLLM(BaseLLM):
     def __init__(self, api_key: str = None, base_url: str = None, model: str = "ark-code-latest"):
-        self.api_key = api_key if api_key else os.getenv("ARKPLAN_API_KEY")
+        self.api_key = api_key if api_key else settings.llm.arkplan_api_key
         self.base_url = base_url if base_url else "https://ark.cn-beijing.volces.com/api/coding/v3"
         self.model = model
-        self.client = AsyncOpenAI(api_key=self.api_key, base_url=self.base_url)
+        self.client = AsyncOpenAI(api_key=self.api_key or MISSING_API_KEY_PLACEHOLDER, base_url=self.base_url)
 
 if __name__ == "__main__":
     import asyncio
@@ -149,4 +151,3 @@ if __name__ == "__main__":
             traceback.print_exc()
 
     asyncio.run(test())
-

@@ -1,0 +1,64 @@
+server:
+  # Use 127.0.0.1 for local native development.
+  # Use 0.0.0.0 when this config is mounted into the Docker app container.
+  host: 127.0.0.1
+  port: 8000
+
+database:
+  # Local native PostgreSQL example:
+  url: postgresql:///paper_online
+  # Docker Compose app container example:
+  # url: postgresql://paper:change-me@postgres:5432/paper_online
+
+docker:
+  postgres_port: 5432
+
+admin:
+  email: admin@example.com
+  initial_password: change-this-admin-password
+
+llm:
+  openai_api_key:
+  siliconflow_api_key:
+  open_router_api_key:
+  step_api_key:
+  arkplan_api_key:
+
+paths:
+  paper_content_cache_dir: data/paper_cache
+
+auth:
+  public_registration_enabled: true
+  require_email_verification: false
+  session_cookie_name: paper_session
+  session_ttl_days: 30
+  cookie_secure: false
+  cookie_samesite: lax
+  password_min_length: 8
+
+presence:
+  online_timeout_seconds: 30
+  snapshot_interval_seconds: 60
+  retention_days: 90
+
+background_analysis:
+  # Disabled by default to avoid calling LLM APIs immediately on startup.
+  enabled: false
+  check_interval_seconds: 86400
+
+hf_daily:
+  enabled: true
+  api_url: https://huggingface.co/api/daily_papers
+  fetch_time: "22:00"
+  timezone: Asia/Shanghai
+  top_n: 5
+
+feishu_notifications:
+  enabled: true
+  push_time: "10:00"
+  max_daily_push_count: 5
+
+cors:
+  allowed_origins:
+    - http://127.0.0.1:5173
+    - http://localhost:5173

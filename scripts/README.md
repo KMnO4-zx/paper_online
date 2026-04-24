@@ -1,129 +1,90 @@
-# 数据库重构实现
+# 数据库与迁移脚本
 
-## 概述
+当前仓库已经从 **Supabase SDK + 托管数据库** 迁移为 **标准 PostgreSQL 16**。
+普通贡献者只需要关注：
 
-本目录包含数据库迁移和数据导入的脚本。
+- `scripts/apply_migrations.py`
+- `scripts/import_papers.py`
+- `scripts/migrate_db.sql`
 
-## 文件说明
+`export_supabase.sh` / `restore_supabase_dump.sh` 是**维护者内部迁移脚本**，不属于常规贡献流程。
 
-- `migrate_db.sql` - SQL 迁移脚本，用于创建新表和修改现有表结构
-- `import_papers.py` - Python 脚本，用于将 JSONL 文件中的论文数据导入 Supabase
+## 目录说明
 
-## 数据库迁移步骤
+- `scripts/apply_migrations.py`：按顺序执行 `db/migrations/*.sql`
+- `scripts/import_papers.py`：将 `crawled_data/{conference}` 下的 JSONL 导入 PostgreSQL
+- `scripts/export_supabase.sh`：使用 `pg_dump` 导出 Supabase schema 和 data
+- `scripts/restore_supabase_dump.sh`：将导出的 `supabase_data.dump` 恢复到本地 PostgreSQL
+- `scripts/migrate_db.sql`：单文件版完整 migration，方便手动执行
 
-### 1. 执行 SQL 迁移
+## 本地初始化数据库
 
-在 Supabase SQL Editor 中执行 `migrate_db.sql`，完成以下操作：
-- 创建 `authors` 表
-- 创建 `keywords` 表
-- 为 `papers` 表添加 `venue` 和 `primary_area` 列
-- 创建 `search_papers_optimized` 和 `count_papers_optimized` RPC 函数
-
-### 1.1 第一阶段搜索优化部署顺序
-
-第一阶段数据库优化依赖 Supabase RPC 函数。推荐部署顺序：
-
-1. 先在 Supabase SQL Editor 执行最新的 `migrate_db.sql`
-2. 确认 `search_papers_optimized` 和 `count_papers_optimized` 已创建成功
-3. 再部署后端代码
-
-如果先部署了后端代码但 Supabase 尚未执行 RPC SQL，系统会自动回退到旧的 Python 搜索逻辑，功能不会中断，但不会获得新的性能优化收益。
-
-### 1.2 第二阶段 FTS 升级说明
-
-第二阶段会继续复用同名 RPC：
-
-- `search_papers_optimized`
-- `count_papers_optimized`
-
-但其内部实现会从 `ILIKE` 升级为 PostgreSQL Full Text Search，使用 `english` 词典，并新增 3 个 GIN 索引：
-
-- `idx_papers_title_fts`
-- `idx_papers_abstract_fts`
-- `idx_keywords_keyword_fts`
-
-部署顺序仍然建议：
-
-1. 在 Supabase SQL Editor 中重新执行最新的 `migrate_db.sql`
-2. 验证两个 RPC 查询有结果
-3. 重启后端服务
-
-可用下面的 SQL 做验证：
-
-```sql
-select *
-from search_papers_optimized(
-  'transformers',
-  'NeurIPS 2025',
-  true,
-  true,
-  true,
-  5,
-  0
-);
-
-select count_papers_optimized(
-  'transformers',
-  'NeurIPS 2025',
-  true,
-  true,
-  true
-);
-```
-
-如果第二阶段 SQL 尚未部署，后端仍会回退到第一阶段搜索逻辑，但不会获得 FTS 的词干化和相关性排序提升。
-
-### 2. 导入数据
-
-运行导入脚本，从爬取的数据中加载论文：
+先复制并编辑根目录配置：
 
 ```bash
-# 导入 NeurIPS 2025 论文
-python scripts/import_papers.py --conference neurips_2025
-
-# 导入 ICLR 2026 论文
-python scripts/import_papers.py --conference iclr_2026
+cp config.yaml.example config.yaml
 ```
 
-**环境要求：**
-- 脚本会自动从 `backend/.env` 读取 Supabase 凭证
-- 需要安装 `python-dotenv` 依赖：`pip install python-dotenv`
+确认 `config.yaml` 中的 `database.url` 指向本地 PostgreSQL。
 
-## 已完成的修改
+执行 migration：
 
-### 后端
-- 更新 `database.py`：
-  - `get_paper()` 现在会联表查询 authors 和 keywords
-  - `save_paper()` 现在会保存到 authors 和 keywords 表
-  - 删除了 `get_recent_papers()` 函数
+```bash
+uv run python scripts/apply_migrations.py
+```
 
-- 更新 `app.py`：
-  - 删除了 `/papers/recent` 端点
+如果要导入最小开发数据：
 
-### 前端
-- 更新 `index.html`：
-  - 删除了"最近分析"部分
+```bash
+uv run python scripts/apply_migrations.py --seed dev
+```
 
-- 更新 `home.js`：
-  - 删除了加载最近论文的逻辑
+## 导入真实会议数据
 
-## 新数据库结构
+```bash
+uv run python scripts/import_papers.py --conference neurips_2025
+uv run python scripts/import_papers.py --conference iclr_2026
+uv run python scripts/import_papers.py --conference icml_2025
+```
 
-**papers 表：**
-- id (TEXT, 主键)
-- title (TEXT)
-- abstract (TEXT)
-- venue (TEXT) - 例如："NeurIPS 2025 poster"
-- primary_area (TEXT) - 例如："applications"
-- llm_response (TEXT)
+## 维护者：从 Supabase 导出现有数据
 
-**authors 表：**
-- id (SERIAL, 主键)
-- paper_id (TEXT, 外键)
-- author_name (TEXT)
-- author_order (INTEGER)
+需要先安装 PostgreSQL 客户端工具（`pg_dump` 主版本应尽量与 Supabase 数据库一致，例如服务端是 PostgreSQL 17 时使用 `pg_dump` 17），并配置 **Session pooler** 连接串：
 
-**keywords 表：**
-- id (SERIAL, 主键)
-- paper_id (TEXT, 外键)
-- keyword (TEXT)
+```bash
+SUPABASE_DATABASE_URL=postgresql://postgres.<project-ref>:password@aws-0-<region>.pooler.supabase.com:5432/postgres
+```
+
+然后执行：
+
+```bash
+./scripts/export_supabase.sh
+```
+
+如果系统里有多个 `pg_dump` 版本，可以显式指定：
+
+```bash
+PG_DUMP_BIN=/opt/homebrew/opt/postgresql@17/bin/pg_dump ./scripts/export_supabase.sh
+```
+
+导出产物会写到：
+
+- `db/dumps/supabase_schema.sql`
+- `db/dumps/supabase_data.dump`
+
+## 维护者：将导出的数据恢复到本地 PostgreSQL
+
+先执行仓库 migration，再恢复数据：
+
+```bash
+uv run python scripts/apply_migrations.py
+./scripts/restore_supabase_dump.sh
+```
+
+如果本机装了多个客户端版本，也可以显式指定：
+
+```bash
+PG_RESTORE_BIN=/opt/homebrew/opt/postgresql@17/bin/pg_restore \
+PSQL_BIN=/opt/homebrew/opt/postgresql@16/bin/psql \
+./scripts/restore_supabase_dump.sh
+```

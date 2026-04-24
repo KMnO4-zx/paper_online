@@ -1,11 +1,13 @@
-import { Eye, ExternalLink, FileText, Heart } from 'lucide-react';
-import { useState } from 'react';
+import { Bookmark, CalendarDays, Eye, Heart, Star, ThumbsUp } from 'lucide-react';
+import { useEffect, useState } from 'react';
 
 import { RichContent } from '@/components/rich-content';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { fetchPaperMarks, updatePaperMark } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { getVenueParts, normalizeKeywords } from '@/lib/content';
-import { getPaperMarks, setPaperMark } from '@/lib/storage';
+import { navigate } from '@/lib/router';
 import type { Paper } from '@/types';
 
 interface PaperCardProps {
@@ -13,6 +15,8 @@ interface PaperCardProps {
   index: number;
   onOpen: (paper: Paper) => void;
 }
+
+const EMPTY_MARKS = { viewed: false, liked: false, favorited: false };
 
 function getConferenceColor(conference: string) {
   switch (conference) {
@@ -22,6 +26,8 @@ function getConferenceColor(conference: string) {
       return 'bg-violet-50 text-violet-700 border-violet-200';
     case 'ICML':
       return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    case 'Hugging Face':
+      return 'bg-amber-50 text-amber-700 border-amber-200';
     default:
       return 'bg-slate-100 text-slate-700 border-slate-200';
   }
@@ -39,12 +45,48 @@ function getKeywordColor(index: number) {
 }
 
 export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
-  const [marks, setMarks] = useState(() => getPaperMarks(paper.id));
+  const { user, isLoading } = useAuth();
+  const [marks, setMarks] = useState(EMPTY_MARKS);
   const [isLikeAnimating, setIsLikeAnimating] = useState(false);
   const keywords = normalizeKeywords(paper.keywords).slice(0, 6);
   const venue = getVenueParts(paper.venue);
-  const openReviewUrl = `https://openreview.net/forum?id=${paper.id}`;
-  const pdfUrl = paper.pdf || `https://openreview.net/pdf?id=${paper.id}`;
+  const isHfDaily = venue.conference === 'Hugging Face';
+  const createdAtLabel = paper.created_at ? new Date(paper.created_at).toLocaleString() : null;
+
+  useEffect(() => {
+    let active = true;
+    setMarks(EMPTY_MARKS);
+    if (isLoading || !user) {
+      return () => {
+        active = false;
+      };
+    }
+    void fetchPaperMarks([paper.id])
+      .then((nextMarks) => {
+        if (active) {
+          setMarks(nextMarks[paper.id] ?? EMPTY_MARKS);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setMarks(EMPTY_MARKS);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [isLoading, paper.id, user]);
+
+  const requireLogin = () => {
+    if (isLoading) {
+      return false;
+    }
+    if (!user) {
+      navigate('/login');
+      return false;
+    }
+    return true;
+  };
 
   return (
     <article
@@ -59,6 +101,18 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
         {paper.primary_area ? (
           <Badge variant="outline" className="border-[#e6ebf2] bg-[#f8fafc] text-[#516072]">
             {paper.primary_area}
+          </Badge>
+        ) : null}
+        {isHfDaily && typeof paper.hf_daily?.upvotes === 'number' ? (
+          <Badge variant="outline" className="border-[#fed7aa] bg-[#fff7ed] text-[#c2410c]">
+            <ThumbsUp className="mr-1 h-3 w-3" />
+            {paper.hf_daily.upvotes}
+          </Badge>
+        ) : null}
+        {isHfDaily && typeof paper.hf_daily?.github_stars === 'number' ? (
+          <Badge variant="outline" className="border-[#dbeafe] bg-[#eff6ff] text-[#2563eb]">
+            <Star className="mr-1 h-3 w-3" />
+            {paper.hf_daily.github_stars}
           </Badge>
         ) : null}
       </div>
@@ -84,38 +138,24 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
         {paper.abstract || '暂无摘要'}
       </p>
 
+      {isHfDaily && createdAtLabel ? (
+        <div className="mb-4 flex items-center gap-1.5 text-xs text-[#728095]">
+          <CalendarDays className="h-3.5 w-3.5 text-[#ff9900]" />
+          入库时间：{createdAtLabel}
+        </div>
+      ) : null}
+
       <div className="flex flex-wrap items-center gap-2">
-        <a
-          href={openReviewUrl}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <Button variant="outline" size="sm" className="rounded-full border-[#f3d597] bg-[#fff7df] text-[#c77b00]">
-            <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-            OpenReview
-          </Button>
-        </a>
-
-        <a
-          href={pdfUrl}
-          target="_blank"
-          rel="noreferrer"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <Button variant="outline" size="sm" className="rounded-full border-[#bfdbfe] bg-[#eff6ff] text-[#2563eb]">
-            <FileText className="mr-1.5 h-3.5 w-3.5" />
-            PDF
-          </Button>
-        </a>
-
-        <div className="ml-auto flex flex-wrap gap-2">
+        <div className="flex flex-wrap gap-2">
           <Button
             variant="outline"
             size="sm"
             onClick={(event) => {
               event.stopPropagation();
-              setMarks(setPaperMark(paper.id, 'viewed', !marks.viewed));
+              if (!requireLogin()) {
+                return;
+              }
+              void updatePaperMark(paper.id, { viewed: !marks.viewed }).then(setMarks);
             }}
             className={`rounded-full ${
               marks.viewed
@@ -132,8 +172,11 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
             size="sm"
             onClick={(event) => {
               event.stopPropagation();
+              if (!requireLogin()) {
+                return;
+              }
               setIsLikeAnimating(true);
-              setMarks(setPaperMark(paper.id, 'liked', !marks.liked));
+              void updatePaperMark(paper.id, { liked: !marks.liked }).then(setMarks);
               window.setTimeout(() => setIsLikeAnimating(false), 400);
             }}
             className={`rounded-full ${
@@ -144,6 +187,26 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
           >
             <Heart className={`mr-1.5 h-3.5 w-3.5 ${isLikeAnimating ? 'animate-heart-beat' : ''} ${marks.liked ? 'fill-current' : ''}`} />
             {marks.liked ? '已点赞' : '点赞'}
+          </Button>
+
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={(event) => {
+              event.stopPropagation();
+              if (!requireLogin()) {
+                return;
+              }
+              void updatePaperMark(paper.id, { favorited: !marks.favorited }).then(setMarks);
+            }}
+            className={`rounded-full ${
+              marks.favorited
+                ? 'border-[#fed7aa] bg-[#fff7ed] text-[#ea580c]'
+                : 'border-[#dbe2ea] text-[#66768b]'
+            }`}
+          >
+            <Bookmark className={`mr-1.5 h-3.5 w-3.5 ${marks.favorited ? 'fill-current' : ''}`} />
+            {marks.favorited ? '已收藏' : '收藏'}
           </Button>
         </div>
       </div>

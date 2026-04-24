@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ChevronLeft, Eye, ExternalLink, FileText, Heart, Loader2, Sparkles } from 'lucide-react';
+import { Bookmark, ChevronLeft, Eye, FileText, Heart, Loader2, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ChatPanel } from '@/components/chat-panel';
 import { RichContent } from '@/components/rich-content';
-import { fetchPaperInfo, streamSse } from '@/lib/api';
+import { fetchPaperInfo, fetchPaperMarks, streamSse, updatePaperMark } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { getVenueParts, normalizeKeywords } from '@/lib/content';
 import { navigate } from '@/lib/router';
-import { getPaperMarks, setPaperMark } from '@/lib/storage';
 import type { Paper } from '@/types';
 
 interface PaperPageProps {
@@ -17,8 +17,10 @@ interface PaperPageProps {
 
 const BACK_BUTTON_FADE_DISTANCE = 72;
 const BACK_BUTTON_MAX_TRANSLATE_Y = 8;
+const EMPTY_MARKS = { viewed: false, liked: false, favorited: false };
 
 export function PaperPage({ paperId }: PaperPageProps) {
+  const { user, isLoading: isAuthLoading } = useAuth();
   const [paper, setPaper] = useState<Paper | null>(null);
   const [paperError, setPaperError] = useState<string | null>(null);
   const [paperLoading, setPaperLoading] = useState(true);
@@ -27,15 +29,35 @@ export function PaperPage({ paperId }: PaperPageProps) {
   const [analysisLoading, setAnalysisLoading] = useState(true);
   const [analysisStreaming, setAnalysisStreaming] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
-  const [marks, setMarks] = useState(() => getPaperMarks(paperId));
+  const [marks, setMarks] = useState(EMPTY_MARKS);
   const [isLikeAnimating, setIsLikeAnimating] = useState(false);
   const [backButtonProgress, setBackButtonProgress] = useState(0);
   const analysisRequestIdRef = useRef(0);
   const analysisAbortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
-    setMarks(getPaperMarks(paperId));
-  }, [paperId]);
+    let active = true;
+    setMarks(EMPTY_MARKS);
+    if (isAuthLoading || !user) {
+      return () => {
+        active = false;
+      };
+    }
+    void fetchPaperMarks([paperId])
+      .then((nextMarks) => {
+        if (active) {
+          setMarks(nextMarks[paperId] ?? EMPTY_MARKS);
+        }
+      })
+      .catch(() => {
+        if (active) {
+          setMarks(EMPTY_MARKS);
+        }
+      });
+    return () => {
+      active = false;
+    };
+  }, [isAuthLoading, paperId, user]);
 
   useEffect(() => {
     const handleScroll = () => {
@@ -145,10 +167,31 @@ export function PaperPage({ paperId }: PaperPageProps) {
 
   const venue = getVenueParts(paper?.venue);
   const keywords = normalizeKeywords(paper?.keywords);
-  const openReviewUrl = `https://openreview.net/forum?id=${paperId}`;
   const pdfUrl = paper?.pdf || `https://openreview.net/pdf?id=${paperId}`;
+  const kimiPrefillPrompt = [
+    '你是一位人工智能领域的专家。我是一位刚入门的人工智能新人，正在学习这篇论文。请你详细的向我讲解教授这篇论文，必要的时候用公式或者代码辅助解释。确保我能够理解每个细节和背景知识和理解论文的motivation还有方法。',
+    '具体来说，请你',
+    '1. 必须详细的讲给我研究背景和动机。 (尽可能的详细)',
+    '2. 详细的介绍核心贡献和方法。 (尽可能的详细)',
+    '3. 详细的讲方法的具体实现，必要的时候有公式和代码。 (尽可能的详细)',
+    '4. 详细的讲一下实验的结果，包括实验的setting和结论。 (尽可能的详细)',
+    '务必按照我的要求做，让我听懂，不然你会有大麻烦。',
+    '',
+    `论文 PDF 链接：${pdfUrl}`,
+  ].join('\n');
+  const kimiUrl = `https://www.kimi.com/?prefill_prompt=${encodeURIComponent(kimiPrefillPrompt)}&send_immediately=true`;
   const isBackButtonHidden = backButtonProgress >= 1;
   const backButtonOpacity = 1 - backButtonProgress;
+  const requireLogin = () => {
+    if (isAuthLoading) {
+      return false;
+    }
+    if (!user) {
+      navigate('/login');
+      return false;
+    }
+    return true;
+  };
 
   return (
     <div className="mx-auto max-w-[96rem] animate-fade-in">
@@ -227,16 +270,16 @@ export function PaperPage({ paperId }: PaperPageProps) {
                 </div>
 
                 <div className="flex flex-wrap gap-2">
-                  <a href={openReviewUrl} target="_blank" rel="noreferrer">
-                    <Button variant="outline" className="rounded-full border-[#f3d597] bg-[#fff7df] text-[#c77b00]">
-                      <ExternalLink className="mr-1.5 h-4 w-4" />
-                      OpenReview
-                    </Button>
-                  </a>
                   <a href={pdfUrl} target="_blank" rel="noreferrer">
                     <Button variant="outline" className="rounded-full border-[#bfdbfe] bg-[#eff6ff] text-[#2563eb]">
                       <FileText className="mr-1.5 h-4 w-4" />
                       PDF
+                    </Button>
+                  </a>
+                  <a href={kimiUrl} target="_blank" rel="noreferrer">
+                    <Button variant="outline" className="rounded-full border-[#d8b4fe] bg-[#faf5ff] text-[#9333ea]">
+                      <Sparkles className="mr-1.5 h-4 w-4" />
+                      Open in KIMI
                     </Button>
                   </a>
                   <Button
@@ -246,7 +289,12 @@ export function PaperPage({ paperId }: PaperPageProps) {
                         ? 'border-[#bfdbfe] bg-[#eff6ff] text-[#2563eb]'
                         : 'border-[#dbe2ea] text-[#66768b]'
                     }`}
-                    onClick={() => setMarks(setPaperMark(paperId, 'viewed', !marks.viewed))}
+                    onClick={() => {
+                      if (!requireLogin()) {
+                        return;
+                      }
+                      void updatePaperMark(paperId, { viewed: !marks.viewed }).then(setMarks);
+                    }}
                   >
                     <Eye className={`mr-1.5 h-4 w-4 ${marks.viewed ? 'fill-current' : ''}`} />
                     {marks.viewed ? '已看过' : '看过'}
@@ -259,13 +307,33 @@ export function PaperPage({ paperId }: PaperPageProps) {
                         : 'border-[#dbe2ea] text-[#66768b]'
                     }`}
                     onClick={() => {
+                      if (!requireLogin()) {
+                        return;
+                      }
                       setIsLikeAnimating(true);
-                      setMarks(setPaperMark(paperId, 'liked', !marks.liked));
+                      void updatePaperMark(paperId, { liked: !marks.liked }).then(setMarks);
                       window.setTimeout(() => setIsLikeAnimating(false), 400);
                     }}
                   >
                     <Heart className={`mr-1.5 h-4 w-4 ${isLikeAnimating ? 'animate-heart-beat' : ''} ${marks.liked ? 'fill-current' : ''}`} />
                     {marks.liked ? '已点赞' : '点赞'}
+                  </Button>
+                  <Button
+                    variant="outline"
+                    className={`rounded-full ${
+                      marks.favorited
+                        ? 'border-[#fed7aa] bg-[#fff7ed] text-[#ea580c]'
+                        : 'border-[#dbe2ea] text-[#66768b]'
+                    }`}
+                    onClick={() => {
+                      if (!requireLogin()) {
+                        return;
+                      }
+                      void updatePaperMark(paperId, { favorited: !marks.favorited }).then(setMarks);
+                    }}
+                  >
+                    <Bookmark className={`mr-1.5 h-4 w-4 ${marks.favorited ? 'fill-current' : ''}`} />
+                    {marks.favorited ? '已收藏' : '收藏'}
                   </Button>
                 </div>
               </div>

@@ -137,6 +137,8 @@ celerybeat.pid
 # Environments
 .env
 .envrc
+config.yaml
+.docker/
 .venv
 env/
 venv/
@@ -208,6 +210,7 @@ __marimo__/
 
 # database
 *.db
+db/dumps/
 
 # Mac OS
 .DS_Store
@@ -223,6 +226,7 @@ frontend-react/dist/
 
 # crawler output data
 data/
+data/paper_cache/
 *.jsonl
 crawled_data/
 

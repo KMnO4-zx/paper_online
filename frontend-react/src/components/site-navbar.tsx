@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from 'react';
-import { Github, Radio } from 'lucide-react';
+import { BookMarked, Github, LogOut, Radio, Shield } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { fetchOnlineCount, sendHeartbeat } from '@/lib/api';
+import { useAuth } from '@/lib/auth';
 import { navigate, useAppLocation } from '@/lib/router';
 import { getUserId } from '@/lib/storage';
 
 export function SiteNavbar() {
   const location = useAppLocation();
+  const { user, logout } = useAuth();
   const [isScrolled, setIsScrolled] = useState(false);
   const [isVisible, setIsVisible] = useState(true);
   const [onlineCount, setOnlineCount] = useState(0);
@@ -63,7 +65,7 @@ export function SiteNavbar() {
       mounted = false;
       window.clearInterval(interval);
     };
-  }, []);
+  }, [user?.id]);
 
   return (
     <header
@@ -92,12 +94,60 @@ export function SiteNavbar() {
           </div>
         </button>
 
-        <div className="hidden items-center gap-2 rounded-full bg-white/80 px-4 py-2 text-sm text-[#586578] shadow-sm ring-1 ring-black/5 md:flex">
-          <Radio className="h-4 w-4 text-[#16a34a]" />
-          <span>{onlineCount} 人在线</span>
-        </div>
-
         <div className="flex items-center gap-2">
+          <div className="hidden shrink-0 items-center gap-2 rounded-full bg-white/80 px-4 py-2 text-sm text-[#586578] shadow-sm ring-1 ring-black/5 md:flex">
+            <Radio className="h-4 w-4 text-[#16a34a]" />
+            <span>{onlineCount} 人在线</span>
+          </div>
+          {user ? (
+            <>
+              <Button
+                variant="outline"
+                className="rounded-full border-[#bfdbfe] bg-[#eff6ff] text-[#2563eb]"
+                onClick={() => navigate('/me')}
+              >
+                <BookMarked className="mr-2 h-4 w-4" />
+                我的论文
+              </Button>
+              {user.role === 'admin' ? (
+                <Button
+                  variant="outline"
+                  className="rounded-full border-[#fed7aa] bg-[#fff7ed] text-[#c2410c]"
+                  onClick={() => navigate('/admin')}
+                >
+                  <Shield className="mr-2 h-4 w-4" />
+                  后台
+                </Button>
+              ) : null}
+              <div className="hidden max-w-[14rem] truncate rounded-full bg-white/80 px-4 py-2 text-sm text-[#586578] shadow-sm ring-1 ring-black/5 lg:block">
+                {user.email}
+              </div>
+              <Button
+                variant="outline"
+                className="rounded-full border-[#d7dde8] bg-[#f8fafc] text-[#243047]"
+                onClick={() => void logout()}
+              >
+                <LogOut className="mr-2 h-4 w-4" />
+                退出
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="outline"
+                className="rounded-full border-[#fed7aa] bg-[#fff7ed] text-[#c2410c]"
+                onClick={() => navigate('/login')}
+              >
+                登录
+              </Button>
+              <Button
+                className="rounded-full bg-gradient-to-r from-[#ff9900] to-[#ff7a00] text-white"
+                onClick={() => navigate('/register')}
+              >
+                注册
+              </Button>
+            </>
+          )}
           <Button
             variant="outline"
             className="rounded-full border-[#f3d7df] bg-[#fff6f8] text-[#d84b72] hover:border-[#edbfd0] hover:bg-[#ffeef3] hover:text-[#c93c64]"

@@ -1,5 +1,29 @@
 # ChangeLog History
 
+## 2026-04-20
+
+- 🔐 新增正式账号系统：支持邮箱密码注册 / 登录、HTTP-only Cookie 会话、密码修改、退出登录，并将论文聊天历史绑定到登录账号。
+- ⭐ 将论文“看过 / 点赞”改为数据库持久化：新增 `paper_marks`，记录 `viewed_at`、`liked_at`、`updated_at`，为后续推荐系统提供用户行为数据基础。
+- 👤 新增个人主页 `/me`：展示用户看过和点赞过的论文，支持按最近看过、最近点赞、收藏优先、最近操作、标题排序，并支持筛选全部 / 看过 / 已点赞。
+- 🛠️ 新增管理员后台 `/admin`：展示当前在线人数、登录用户 / 游客拆分、历史在线趋势，并支持用户启停、重置密码和修改管理员密码。
+- 📈 将在线人数从进程内状态迁移到 PostgreSQL：新增 `presence_heartbeats` 和 `presence_snapshots`，后端定期写入在线趋势快照。
+- ⚙️ 统一运行时配置到 `config.yaml`：新增 `backend/config.py`、`config.yaml.example` 和 Docker Compose 启动辅助脚本，移除运行时 `.env.example` 主路径。
+- 🚀 改进启动流程：后端启动时自动执行 SQL migration，并在缺少有效 LLM key 时跳过后台分析，避免启动后因缺表或错误 key 持续报错。
+- 🧭 调整论文卡片交互：列表页不再展示 OpenReview / PDF 按钮，保留详情页 PDF 和 KIMI 入口；看过 / 点赞按钮移动到卡片左侧。
+- 🧯 优化未登录状态：未登录访问论文 marks 和聊天 session 列表时静默返回空数据，避免前端正常浏览时刷 `401 Unauthorized` 日志。
+- 📚 更新中英文 README：补充账号系统、个人论文库、管理员后台、`config.yaml` 配置方式和最新本地 / Docker 启动说明。
+
+## 2026-04-17
+
+- 🐘 完成数据库解耦：移除运行时对 Supabase SDK 的依赖，后端改为基于 `psycopg` 直连 PostgreSQL，自托管 PostgreSQL 16 成为新的主路径。
+- 🧱 新增完整数据库初始化能力：补齐 `db/migrations/`、`scripts/apply_migrations.py`、`db/seeds/dev_seed.sql`、单文件 `scripts/migrate_db.sql`，支持空库初始化、开发 seed 和结构化迁移。
+- 🐳 增加单机 VPS 部署基础设施：引入 `docker-compose.yml` 和 `config.yaml.example`，并让应用容器启动前自动执行 migration。
+- 📦 调整数据导入流程：`scripts/import_papers.py` 改为直连 PostgreSQL，继续支持从 `crawled_data/{conference}` 批量导入 ICLR 2026、NeurIPS 2025、ICML 2025。
+- 🗃️ 新增论文正文磁盘缓存：Jina Reader 返回的正文不再重复远程抓取，而是按 `paper_id` 缓存到 `data/paper_cache/`，analysis / chat / 后台分析统一复用本地缓存。
+- 🔐 收紧 Docker 部署默认值：`POSTGRES_PASSWORD` 改为必须显式提供，不再允许 `change-me` 弱默认值；同时为 `/app/data` 增加命名 volume，持久化 `paper_cache`。
+- 🧭 增加论文详情页外链能力：在论文详情页新增 `Open in KIMI` 按钮，自动携带面向论文讲解的预填 prompt、PDF 链接以及 `send_immediately=true`。
+- 📚 更新中英文 README 与开发说明：补充本地 PostgreSQL 启停、开发者指南、缓存目录说明、自托管部署路径，并移除普通开发者不需要的 Supabase 导出主流程。
+
 ## 2026-03-18
 
 - 🧹 移除旧 `frontend/` 静态前端依赖，FastAPI 不再回退托管旧版 HTML/CSS/JS。

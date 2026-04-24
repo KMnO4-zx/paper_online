@@ -2,7 +2,7 @@ import asyncio
 import logging
 from database import get_unanalyzed_papers, get_paper, update_llm_response
 from markdown_utils import normalize_llm_markdown
-from utils import reader, ReaderError, truncate_content_for_llm
+from utils import get_or_cache_paper_content, ReaderError, truncate_content_for_llm
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +24,11 @@ class BackgroundAnalyzer:
                     return False
 
                 logger.info(f"[{paper_id}] 读取 PDF...")
-                paper_content = await asyncio.to_thread(reader, paper_info["pdf"])
+                paper_content = await asyncio.to_thread(
+                    get_or_cache_paper_content,
+                    paper_id,
+                    paper_info["pdf"],
+                )
                 paper_content = truncate_content_for_llm(paper_content)
 
                 logger.info(f"[{paper_id}] 生成分析...")
