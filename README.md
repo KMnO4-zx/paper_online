@@ -17,6 +17,8 @@
 
 ***&emsp;&emsp;可访问 https://paper-insight.herobase.tech 在线体验，或按照以下步骤在本地部署。***
 
+> *注：可使用邀请码`PI-ZUWP-SA53-BP3N-PSWY`注册本人部署的在线服务～*
+
 &emsp;&emsp;已支持：[ICLR 2026](https://paper-insight.herobase.tech/conference/iclr_2026), [NeurIPS 2025](https://paper-insight.herobase.tech/conference/neurips_2025), [ICML 2025](https://paper-insight.herobase.tech/conference/icml_2025)
 
 &emsp;&emsp;额外论文来源：[Hugging Face Daily Papers](https://paper-insight.herobase.tech/hf-daily)。系统可以定时抓取 Hugging Face Daily Papers，按点赞数选择热门论文入库、自动去重，并进入 AI 分析队列。
