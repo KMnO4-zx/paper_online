@@ -86,7 +86,7 @@ export function HomePage() {
               </div>
               <h2 className="text-2xl font-semibold text-[#172033]">Hugging Face Daily Papers</h2>
               <p className="mt-2 max-w-3xl text-sm leading-6 text-[#6b7280]">
-                每天晚上自动抓取 Hugging Face Daily Papers 点赞最多的 5 篇论文，按入库时间倒序展示，并自动进行 AI 分析。
+                每天晚上自动抓取 Hugging Face Daily Papers 点赞最多的 5 篇论文，按日期倒序展示，并自动进行 AI 分析。
               </p>
             </div>
             <Button variant="ghost" className="px-0 text-[#ff7a00] hover:bg-transparent hover:text-[#ff7a00]">

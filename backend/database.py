@@ -2335,8 +2335,8 @@ def get_hf_daily_papers(
         return [], 0
 
     def operation() -> tuple[list[dict], int]:
-        where_parts = ["p.venue = %s"]
-        params: list[object] = ["Hugging Face Daily"]
+        where_parts: list[str] = []
+        params: list[object] = []
         if search:
             search_parts = []
             if search_title:
@@ -2359,11 +2359,16 @@ def get_hf_daily_papers(
                 params.append(f"%{search}%")
             where_parts.append(f"({' OR '.join(search_parts)})")
 
-        where_clause = " AND ".join(where_parts)
+        where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         with _get_connection() as conn:
             with conn.cursor() as cur:
                 cur.execute(
-                    f"SELECT COUNT(*) AS total FROM papers p WHERE {where_clause}",
+                    f"""
+                    SELECT COUNT(*) AS total
+                    FROM hf_daily_papers h
+                    JOIN papers p ON p.id = h.paper_id
+                    {where_clause}
+                    """,
                     params,
                 )
                 total = int(cur.fetchone()["total"] or 0)
@@ -2380,20 +2385,13 @@ def get_hf_daily_papers(
                            h.github_repo AS hf_daily_github_repo,
                            h.github_stars AS hf_daily_github_stars,
                            h.num_comments AS hf_daily_num_comments
-                    FROM papers p
-                    LEFT JOIN LATERAL (
-                        SELECT *
-                        FROM hf_daily_papers
-                        WHERE hf_daily_papers.paper_id = p.id
-                        ORDER BY daily_date DESC, rank ASC
-                        LIMIT 1
-                    ) h ON TRUE
-                    WHERE {where_clause}
+                    FROM hf_daily_papers h
+                    JOIN papers p ON p.id = h.paper_id
+                    {where_clause}
                     ORDER BY
-                        h.daily_date DESC NULLS LAST,
-                        h.upvotes DESC NULLS LAST,
-                        h.rank ASC NULLS LAST,
-                        p.created_at DESC NULLS LAST,
+                        h.daily_date DESC,
+                        h.upvotes DESC,
+                        h.rank ASC,
                         p.title ASC,
                         p.id ASC
                     LIMIT %s OFFSET %s

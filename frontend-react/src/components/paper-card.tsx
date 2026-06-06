@@ -51,7 +51,7 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
   const keywords = normalizeKeywords(paper.keywords).slice(0, 6);
   const venue = getVenueParts(paper.venue);
   const isHfDaily = venue.conference === 'Hugging Face';
-  const createdAtLabel = paper.created_at ? new Date(paper.created_at).toLocaleString() : null;
+  const hfDailyDateLabel = paper.hf_daily?.daily_date ?? null;
 
   useEffect(() => {
     let active = true;
@@ -138,10 +138,10 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
         {paper.abstract || '暂无摘要'}
       </p>
 
-      {isHfDaily && createdAtLabel ? (
+      {isHfDaily && hfDailyDateLabel ? (
         <div className="mb-4 flex items-center gap-1.5 text-xs text-[#728095]">
           <CalendarDays className="h-3.5 w-3.5 text-[#ff9900]" />
-          入库时间：{createdAtLabel}
+          HF Daily 日期：{hfDailyDateLabel}
         </div>
       ) : null}
 
