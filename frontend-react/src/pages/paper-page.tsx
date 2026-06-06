@@ -25,6 +25,7 @@ interface PaperPageProps {
 
 const BACK_BUTTON_FADE_DISTANCE = 72;
 const BACK_BUTTON_MAX_TRANSLATE_Y = 8;
+const AUTO_VIEWED_DELAY_MS = 10_000;
 const EMPTY_MARKS = { viewed: false, liked: false, favorited: false };
 
 function buildPaperTutorPrompt(pdfUrl: string) {
@@ -89,6 +90,30 @@ export function PaperPage({ paperId }: PaperPageProps) {
       active = false;
     };
   }, [isAuthLoading, paperId, user]);
+
+  useEffect(() => {
+    if (isAuthLoading || !user || !paper || paperError || marks.viewed) {
+      return;
+    }
+
+    let active = true;
+    const timerId = window.setTimeout(() => {
+      void updatePaperMark(paperId, { viewed: true })
+        .then((nextMarks) => {
+          if (active) {
+            setMarks(nextMarks);
+          }
+        })
+        .catch(() => {
+          // Keep the page quiet; manual marking still remains available.
+        });
+    }, AUTO_VIEWED_DELAY_MS);
+
+    return () => {
+      active = false;
+      window.clearTimeout(timerId);
+    };
+  }, [isAuthLoading, marks.viewed, paper, paperError, paperId, user]);
 
   useEffect(() => {
     const handleScroll = () => {

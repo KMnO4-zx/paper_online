@@ -463,7 +463,7 @@ export function ProfilePage() {
         </div>
       ) : results.items.length === 0 ? (
         <div className="mt-6 rounded-[28px] bg-white p-8 text-center text-[#728095] shadow-sm ring-1 ring-black/5">
-          暂无记录。打开论文详情后点击“看过”“点赞”或“收藏”，这里就会出现。
+          暂无记录。打开论文详情、点赞或收藏后，这里就会出现。
         </div>
       ) : (
         <div className="mt-6 space-y-4">
