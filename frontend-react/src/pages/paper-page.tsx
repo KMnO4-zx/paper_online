@@ -351,9 +351,16 @@ export function PaperPage({ paperId }: PaperPageProps) {
                         <ChevronDown className="ml-0.5 h-4 w-4" />
                       </Button>
                     </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-56">
+                    <DropdownMenuContent
+                      align="start"
+                      className="w-56 overflow-hidden rounded-2xl border border-white/55 bg-[linear-gradient(135deg,rgba(255,255,255,0.42),rgba(248,245,255,0.30)_46%,rgba(219,234,254,0.24))] p-1.5 shadow-[0_18px_50px_rgba(37,99,235,0.16),inset_0_1px_0_rgba(255,255,255,0.72)] backdrop-blur-3xl backdrop-saturate-150"
+                    >
                       {aiTutorTargets.map((target) => (
-                        <DropdownMenuItem key={target.id} asChild>
+                        <DropdownMenuItem
+                          key={target.id}
+                          asChild
+                          className="rounded-xl border border-transparent px-3 py-2.5 transition-[background-color,border-color,box-shadow,transform] duration-150 hover:-translate-y-0.5 hover:border-white/55 hover:bg-white/32 hover:shadow-[0_10px_26px_rgba(37,99,235,0.14),inset_0_1px_0_rgba(255,255,255,0.70)] focus:-translate-y-0.5 focus:border-white/60 focus:bg-white/38 focus:text-[#172033] focus:shadow-[0_10px_26px_rgba(37,99,235,0.16),inset_0_1px_0_rgba(255,255,255,0.74)] focus:outline-none focus-visible:outline-none data-[highlighted]:-translate-y-0.5 data-[highlighted]:border-white/60 data-[highlighted]:bg-white/38 data-[highlighted]:text-[#172033] data-[highlighted]:shadow-[0_10px_26px_rgba(37,99,235,0.16),inset_0_1px_0_rgba(255,255,255,0.74)] data-[highlighted]:outline-none"
+                        >
                           <a href={target.url} target="_blank" rel="noreferrer" className="cursor-pointer">
                             <div className="flex min-w-0 flex-1 flex-col">
                               <span className="font-medium text-[#172033]">{target.label}</span>
