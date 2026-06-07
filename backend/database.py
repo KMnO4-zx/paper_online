@@ -2365,9 +2365,12 @@ def get_hf_daily_papers(
                 cur.execute(
                     f"""
                     SELECT COUNT(*) AS total
-                    FROM hf_daily_papers h
-                    JOIN papers p ON p.id = h.paper_id
-                    {where_clause}
+                    FROM (
+                        SELECT DISTINCT h.paper_id
+                        FROM hf_daily_papers h
+                        JOIN papers p ON p.id = h.paper_id
+                        {where_clause}
+                    ) unique_hf_daily_papers
                     """,
                     params,
                 )
@@ -2375,25 +2378,35 @@ def get_hf_daily_papers(
 
                 cur.execute(
                     f"""
-                    SELECT p.*,
-                           h.daily_date AS hf_daily_date,
-                           h.rank AS hf_daily_rank,
-                           h.upvotes AS hf_daily_upvotes,
-                           h.thumbnail AS hf_daily_thumbnail,
-                           h.discussion_id AS hf_daily_discussion_id,
-                           h.project_page AS hf_daily_project_page,
-                           h.github_repo AS hf_daily_github_repo,
-                           h.github_stars AS hf_daily_github_stars,
-                           h.num_comments AS hf_daily_num_comments
-                    FROM hf_daily_papers h
-                    JOIN papers p ON p.id = h.paper_id
-                    {where_clause}
+                    SELECT *
+                    FROM (
+                        SELECT DISTINCT ON (h.paper_id)
+                               p.*,
+                               h.daily_date AS hf_daily_date,
+                               h.rank AS hf_daily_rank,
+                               h.upvotes AS hf_daily_upvotes,
+                               h.thumbnail AS hf_daily_thumbnail,
+                               h.discussion_id AS hf_daily_discussion_id,
+                               h.project_page AS hf_daily_project_page,
+                               h.github_repo AS hf_daily_github_repo,
+                               h.github_stars AS hf_daily_github_stars,
+                               h.num_comments AS hf_daily_num_comments
+                        FROM hf_daily_papers h
+                        JOIN papers p ON p.id = h.paper_id
+                        {where_clause}
+                        ORDER BY
+                            h.paper_id ASC,
+                            h.daily_date DESC,
+                            h.upvotes DESC,
+                            h.rank ASC,
+                            h.id DESC
+                    ) latest_hf_daily_papers
                     ORDER BY
-                        h.daily_date DESC,
-                        h.upvotes DESC,
-                        h.rank ASC,
-                        p.title ASC,
-                        p.id ASC
+                        hf_daily_date DESC,
+                        hf_daily_upvotes DESC,
+                        hf_daily_rank ASC,
+                        title ASC,
+                        id ASC
                     LIMIT %s OFFSET %s
                     """,
                     [*params, limit, offset],
