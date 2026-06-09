@@ -64,6 +64,7 @@ from database import (
     get_active_llm_config,
     get_paper,
     get_llm_provider,
+    get_llm_token_usage_metrics,
     get_paper_marks,
     get_presence_counts,
     get_presence_trend,
@@ -1128,6 +1129,14 @@ async def admin_online_metrics(range: str = "24h", admin: dict = Depends(require
             "current": get_presence_counts(settings.presence.online_timeout_seconds),
             "trend": get_presence_trend(range),
         }
+    except DatabaseError as exc:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+
+
+@app.get("/admin/metrics/llm-token-usage")
+async def admin_llm_token_usage_metrics(admin: dict = Depends(require_admin_user)):
+    try:
+        return get_llm_token_usage_metrics()
     except DatabaseError as exc:
         raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
 

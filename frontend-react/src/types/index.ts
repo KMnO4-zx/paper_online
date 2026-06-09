@@ -178,6 +178,44 @@ export interface AdminOnlineMetrics {
   trend: OnlineTrendPoint[];
 }
 
+export interface LlmTokenUsageStats {
+  request_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_input_tokens: number;
+  cache_output_tokens: number;
+  total_tokens: number;
+}
+
+export interface LlmTokenUsageDailyTotal extends LlmTokenUsageStats {
+  date: string;
+}
+
+export interface LlmTokenUsageModelTotal extends LlmTokenUsageStats {
+  provider_key?: string | null;
+  provider_name: string;
+  model_name: string;
+}
+
+export interface LlmTokenUsageDailyRow extends LlmTokenUsageModelTotal {
+  date: string;
+}
+
+export interface LlmTokenUsageWindow {
+  days: string[];
+  totals: LlmTokenUsageStats;
+  daily_totals: LlmTokenUsageDailyTotal[];
+  model_totals: LlmTokenUsageModelTotal[];
+  daily: LlmTokenUsageDailyRow[];
+}
+
+export interface AdminLlmTokenUsageMetrics {
+  timezone: string;
+  generated_at: string;
+  weekly: LlmTokenUsageWindow;
+  monthly: LlmTokenUsageWindow;
+}
+
 export interface HfDailySyncResponse {
   daily_date: string;
   selected: number;

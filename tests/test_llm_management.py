@@ -1,15 +1,22 @@
+import sys
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "backend"))
+
+import llm as llm_module
 from llm import ManagedLLM
 from app import public_active_llm_config
 
 
 class FakeCompletions:
-    def __init__(self, fail_first: bool = False):
+    def __init__(self, fail_first: bool = False, usage=None, model: str | None = None):
         self.calls = []
         self.fail_first = fail_first
+        self.usage = usage
+        self.model = model
 
     async def create(self, **kwargs):
         self.calls.append(kwargs)
@@ -19,6 +26,8 @@ class FakeCompletions:
             choices=[
                 SimpleNamespace(message=SimpleNamespace(content="7")),
             ],
+            usage=self.usage,
+            model=self.model,
         )
 
 
@@ -60,6 +69,58 @@ def test_public_active_llm_config_exposes_display_fields_only():
     }
     assert "api_key" not in payload
     assert "base_url" not in payload
+
+
+def test_extract_llm_usage_tokens_reads_cache_fields():
+    tokens = llm_module.extract_llm_usage_tokens(
+        SimpleNamespace(
+            prompt_tokens=120,
+            completion_tokens=35,
+            total_tokens=155,
+            cache_creation_input_tokens=18,
+            prompt_tokens_details=SimpleNamespace(cached_tokens=42),
+        )
+    )
+
+    assert tokens.input_tokens == 120
+    assert tokens.output_tokens == 35
+    assert tokens.cache_input_tokens == 18
+    assert tokens.cache_output_tokens == 42
+    assert tokens.total_tokens == 155
+
+
+@pytest.mark.asyncio
+async def test_managed_llm_chat_records_usage(monkeypatch):
+    usage = SimpleNamespace(
+        prompt_tokens=10,
+        completion_tokens=4,
+        prompt_tokens_details=SimpleNamespace(cached_tokens=3),
+    )
+    completions = FakeCompletions(usage=usage, model="actual-model")
+    llm = managed_llm_with_fake_client(completions)
+    records = []
+
+    monkeypatch.setattr(
+        llm_module,
+        "_record_llm_usage",
+        lambda recorded_usage, **context: records.append((recorded_usage, context)),
+    )
+
+    output = await llm.chat([{"role": "user", "content": "hello"}], _usage_context="paper_chat")
+
+    assert output == "7"
+    assert records == [
+        (
+            usage,
+            {
+                "provider_id": "provider-1",
+                "provider_key": None,
+                "provider_name": "Test Provider",
+                "model_name": "actual-model",
+                "request_type": "paper_chat",
+            },
+        )
+    ]
 
 
 @pytest.mark.asyncio

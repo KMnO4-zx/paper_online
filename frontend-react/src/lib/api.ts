@@ -4,6 +4,7 @@ import type {
   AdminLlmProvider,
   AdminLlmProviderListResponse,
   AdminLlmTestResponse,
+  AdminLlmTokenUsageMetrics,
   AdminOnlineMetrics,
   AdminUserListResponse,
   AuthResponse,
@@ -248,6 +249,10 @@ export async function updatePaperMark(
 
 export async function fetchAdminOnlineMetrics(range: '24h' | '7d'): Promise<AdminOnlineMetrics> {
   return apiFetch<AdminOnlineMetrics>(`/admin/metrics/online?range=${range}`);
+}
+
+export async function fetchAdminLlmTokenUsageMetrics(): Promise<AdminLlmTokenUsageMetrics> {
+  return apiFetch<AdminLlmTokenUsageMetrics>('/admin/metrics/llm-token-usage');
 }
 
 export async function syncAdminHfDailyPapers(): Promise<HfDailySyncResponse> {

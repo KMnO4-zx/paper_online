@@ -5,6 +5,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from typing import Callable, Iterator, TypeVar
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import psycopg
 from psycopg.rows import dict_row
@@ -67,6 +68,31 @@ def _normalize_llm_model_row(row: dict | None) -> dict | None:
     normalized["id"] = str(normalized["id"])
     normalized["provider_id"] = str(normalized["provider_id"])
     return normalized
+
+
+def _as_nonnegative_int(value: object) -> int:
+    try:
+        parsed = int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(parsed, 0)
+
+
+def _normalize_uuid(value: object) -> str | None:
+    if not value:
+        return None
+    try:
+        return str(uuid.UUID(str(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def _usage_timezone() -> ZoneInfo:
+    try:
+        return ZoneInfo(settings.hf_daily.timezone)
+    except ZoneInfoNotFoundError:
+        logger.warning("LLM token usage timezone 无效，回退到 UTC: %s", settings.hf_daily.timezone)
+        return ZoneInfo("UTC")
 
 
 def _run_with_retry(
@@ -1341,6 +1367,220 @@ def set_active_llm_provider(provider_id: str, model_name: str | None = None) -> 
         return get_llm_provider(str(row["id"]))
 
     return _run_with_retry(operation, f"set_active_llm_provider:{provider_id}")
+
+
+def record_llm_token_usage(
+    *,
+    provider_id: str | None,
+    provider_key: str | None,
+    provider_name: str | None,
+    model_name: str,
+    request_type: str,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cache_input_tokens: int = 0,
+    cache_output_tokens: int = 0,
+    total_tokens: int | None = None,
+    metadata: dict | None = None,
+) -> None:
+    if not DATABASE_URL or not model_name:
+        return
+
+    normalized_provider_id = _normalize_uuid(provider_id)
+    normalized_input_tokens = _as_nonnegative_int(input_tokens)
+    normalized_output_tokens = _as_nonnegative_int(output_tokens)
+    normalized_cache_input_tokens = _as_nonnegative_int(cache_input_tokens)
+    normalized_cache_output_tokens = _as_nonnegative_int(cache_output_tokens)
+    normalized_total_tokens = _as_nonnegative_int(total_tokens)
+    if normalized_total_tokens == 0:
+        normalized_total_tokens = normalized_input_tokens + normalized_output_tokens
+
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO llm_token_usage (
+                        provider_id,
+                        provider_key,
+                        provider_name,
+                        model_name,
+                        request_type,
+                        input_tokens,
+                        output_tokens,
+                        cache_input_tokens,
+                        cache_output_tokens,
+                        total_tokens,
+                        metadata
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                    """,
+                    (
+                        normalized_provider_id,
+                        provider_key,
+                        provider_name,
+                        model_name,
+                        request_type or "unknown",
+                        normalized_input_tokens,
+                        normalized_output_tokens,
+                        normalized_cache_input_tokens,
+                        normalized_cache_output_tokens,
+                        normalized_total_tokens,
+                        Jsonb(metadata or {}),
+                    ),
+                )
+            conn.commit()
+
+    _run_with_retry(operation, f"record_llm_token_usage:{model_name}")
+
+
+def _usage_total_payload(rows: list[dict]) -> dict:
+    totals = {
+        "request_count": 0,
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "cache_input_tokens": 0,
+        "cache_output_tokens": 0,
+        "total_tokens": 0,
+    }
+    for row in rows:
+        for key in totals:
+            totals[key] += _as_nonnegative_int(row.get(key))
+    return totals
+
+
+def _build_llm_usage_window(days: int, rows: list[dict], tz: ZoneInfo) -> dict:
+    today = datetime.now(tz).date()
+    start_date = today - timedelta(days=days - 1)
+    day_keys = [(start_date + timedelta(days=offset)).isoformat() for offset in range(days)]
+    daily_totals: dict[str, dict] = {
+        day_key: {
+            "date": day_key,
+            "request_count": 0,
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "cache_input_tokens": 0,
+            "cache_output_tokens": 0,
+            "total_tokens": 0,
+        }
+        for day_key in day_keys
+    }
+    model_totals: dict[tuple[str | None, str, str], dict] = {}
+    daily_rows: list[dict] = []
+
+    for row in rows:
+        usage_date = row["usage_date"]
+        date_key = usage_date.isoformat() if hasattr(usage_date, "isoformat") else str(usage_date)
+        provider_key = row.get("provider_key")
+        provider_name = row.get("provider_name") or row.get("provider_key") or "Unknown"
+        model_name = row.get("model_name") or "unknown"
+        payload = {
+            "request_count": _as_nonnegative_int(row.get("request_count")),
+            "input_tokens": _as_nonnegative_int(row.get("input_tokens")),
+            "output_tokens": _as_nonnegative_int(row.get("output_tokens")),
+            "cache_input_tokens": _as_nonnegative_int(row.get("cache_input_tokens")),
+            "cache_output_tokens": _as_nonnegative_int(row.get("cache_output_tokens")),
+            "total_tokens": _as_nonnegative_int(row.get("total_tokens")),
+        }
+
+        if date_key in daily_totals:
+            for key, value in payload.items():
+                daily_totals[date_key][key] += value
+
+        model_key = (provider_key, provider_name, model_name)
+        if model_key not in model_totals:
+            model_totals[model_key] = {
+                "provider_key": provider_key,
+                "provider_name": provider_name,
+                "model_name": model_name,
+                "request_count": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_input_tokens": 0,
+                "cache_output_tokens": 0,
+                "total_tokens": 0,
+            }
+        for key, value in payload.items():
+            model_totals[model_key][key] += value
+
+        daily_rows.append(
+            {
+                "date": date_key,
+                "provider_key": provider_key,
+                "provider_name": provider_name,
+                "model_name": model_name,
+                **payload,
+            }
+        )
+
+    daily_rows.sort(key=lambda item: (item["date"], item["total_tokens"], item["model_name"]), reverse=True)
+    sorted_model_totals = sorted(
+        model_totals.values(),
+        key=lambda item: (item["total_tokens"], item["input_tokens"], item["model_name"]),
+        reverse=True,
+    )
+    daily_total_rows = [daily_totals[day_key] for day_key in day_keys]
+
+    return {
+        "days": day_keys,
+        "totals": _usage_total_payload(daily_total_rows),
+        "daily_totals": daily_total_rows,
+        "model_totals": sorted_model_totals,
+        "daily": daily_rows,
+    }
+
+
+def get_llm_token_usage_metrics() -> dict:
+    tz = _usage_timezone()
+    timezone_name = getattr(tz, "key", settings.hf_daily.timezone)
+    today = datetime.now(tz).date()
+    start_date = today - timedelta(days=30 - 1)
+    start_local = datetime.combine(start_date, datetime.min.time(), tzinfo=tz)
+    start_utc = start_local.astimezone(timezone.utc)
+
+    def operation() -> dict:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT
+                      (created_at AT TIME ZONE %s)::date AS usage_date,
+                      provider_key,
+                      COALESCE(provider_name, provider_key, 'Unknown') AS provider_name,
+                      COALESCE(model_name, 'unknown') AS model_name,
+                      COUNT(*) AS request_count,
+                      SUM(input_tokens) AS input_tokens,
+                      SUM(output_tokens) AS output_tokens,
+                      SUM(cache_input_tokens) AS cache_input_tokens,
+                      SUM(cache_output_tokens) AS cache_output_tokens,
+                      SUM(
+                        CASE
+                          WHEN total_tokens > 0 THEN total_tokens
+                          ELSE input_tokens + output_tokens
+                        END
+                      ) AS total_tokens
+                    FROM llm_token_usage
+                    WHERE created_at >= %s
+                    GROUP BY 1, 2, 3, 4
+                    ORDER BY usage_date DESC, total_tokens DESC, model_name
+                    """,
+                    (timezone_name, start_utc),
+                )
+                rows = cur.fetchall()
+
+        week_start_date = today - timedelta(days=7 - 1)
+        weekly_rows = [
+            row for row in rows
+            if row["usage_date"] >= week_start_date
+        ]
+        return {
+            "timezone": timezone_name,
+            "generated_at": datetime.now(timezone.utc),
+            "weekly": _build_llm_usage_window(7, weekly_rows, tz),
+            "monthly": _build_llm_usage_window(30, rows, tz),
+        }
+
+    return _run_with_retry(operation, "get_llm_token_usage_metrics")
 
 
 def get_paper_marks(user_id: str, paper_ids: list[str]) -> dict[str, dict]:

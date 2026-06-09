@@ -2,6 +2,7 @@ from openai import AsyncOpenAI, APIError, APITimeoutError, RateLimitError
 import asyncio
 import logging
 from dataclasses import dataclass
+from typing import Any
 from config import settings
 from prompt import PAPER_ANALYSIS_PROMPT
 
@@ -13,6 +14,194 @@ logger = logging.getLogger(__name__)
 class LLMStreamChunk:
     kind: str
     content: str
+
+
+@dataclass(frozen=True)
+class LLMUsageTokens:
+    input_tokens: int
+    output_tokens: int
+    cache_input_tokens: int
+    cache_output_tokens: int
+    total_tokens: int
+
+
+def _object_to_dict(value: Any) -> dict:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return {
+            key: _object_to_dict(item) if isinstance(item, dict) or hasattr(item, "model_dump") or hasattr(item, "__dict__") else item
+            for key, item in value.items()
+        }
+    if hasattr(value, "model_dump"):
+        dumped = value.model_dump(exclude_none=True)
+        return _object_to_dict(dumped)
+    if hasattr(value, "__dict__"):
+        return {
+            key: _object_to_dict(item) if isinstance(item, dict) or hasattr(item, "model_dump") or hasattr(item, "__dict__") else item
+            for key, item in vars(value).items()
+            if not key.startswith("_")
+        }
+    return {}
+
+
+def _nested_value(data: dict, path: tuple[str, ...]) -> Any:
+    current: Any = data
+    for key in path:
+        if isinstance(current, dict):
+            current = current.get(key)
+        else:
+            current = getattr(current, key, None)
+        if current is None:
+            return None
+    return current
+
+
+def _first_int(data: dict, *paths: tuple[str, ...]) -> int:
+    for path in paths:
+        value = _nested_value(data, path)
+        if value is None or isinstance(value, bool):
+            continue
+        try:
+            return max(int(value), 0)
+        except (TypeError, ValueError):
+            continue
+    return 0
+
+
+def extract_llm_usage_tokens(usage: Any) -> LLMUsageTokens | None:
+    data = _object_to_dict(usage)
+    if not data:
+        return None
+
+    input_tokens = _first_int(
+        data,
+        ("prompt_tokens",),
+        ("input_tokens",),
+    )
+    output_tokens = _first_int(
+        data,
+        ("completion_tokens",),
+        ("output_tokens",),
+    )
+    cache_input_tokens = _first_int(
+        data,
+        ("cache_creation_input_tokens",),
+        ("cache_write_input_tokens",),
+        ("cached_write_input_tokens",),
+        ("prompt_tokens_details", "cache_creation_tokens"),
+        ("prompt_tokens_details", "cache_write_tokens"),
+        ("input_tokens_details", "cache_creation_tokens"),
+        ("input_tokens_details", "cache_write_tokens"),
+        ("input_token_details", "cache_creation"),
+        ("input_token_details", "cache_creation_input_tokens"),
+    )
+    cache_output_tokens = _first_int(
+        data,
+        ("cache_read_input_tokens",),
+        ("cache_hit_input_tokens",),
+        ("cached_input_tokens",),
+        ("prompt_cache_hit_tokens",),
+        ("prompt_tokens_details", "cached_tokens"),
+        ("input_tokens_details", "cached_tokens"),
+        ("input_token_details", "cache_read"),
+        ("input_token_details", "cache_read_input_tokens"),
+    )
+    total_tokens = _first_int(
+        data,
+        ("total_tokens",),
+    )
+    if total_tokens == 0:
+        total_tokens = input_tokens + output_tokens
+    if (
+        input_tokens == 0
+        and output_tokens == 0
+        and cache_input_tokens == 0
+        and cache_output_tokens == 0
+        and total_tokens == 0
+    ):
+        return None
+
+    return LLMUsageTokens(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_input_tokens=cache_input_tokens,
+        cache_output_tokens=cache_output_tokens,
+        total_tokens=total_tokens,
+    )
+
+
+def _response_usage(response: Any) -> Any:
+    if response is None:
+        return None
+    if isinstance(response, dict):
+        return response.get("usage")
+    return getattr(response, "usage", None)
+
+
+def _response_model(response: Any, default_model: str) -> str:
+    if response is None:
+        return default_model
+    if isinstance(response, dict):
+        return str(response.get("model") or default_model)
+    return str(getattr(response, "model", None) or default_model)
+
+
+def _pop_usage_context(params: dict, default_request_type: str) -> str:
+    request_type = params.pop("_usage_context", default_request_type)
+    return str(request_type or default_request_type)
+
+
+def _stream_params_with_usage(params: dict) -> dict:
+    next_params = dict(params)
+    stream_options = next_params.get("stream_options")
+    if isinstance(stream_options, dict):
+        next_params["stream_options"] = {**stream_options, "include_usage": True}
+    elif stream_options is None:
+        next_params["stream_options"] = {"include_usage": True}
+    return next_params
+
+
+async def _create_streaming_completion(client: AsyncOpenAI, params: dict):
+    params_with_usage = _stream_params_with_usage(params)
+    try:
+        return await client.chat.completions.create(**params_with_usage)
+    except APIError as exc:
+        if params_with_usage != params and "stream_options" in str(exc).lower():
+            logger.warning("LLM provider rejected stream_options.include_usage; retrying stream without usage")
+            return await client.chat.completions.create(**params)
+        raise
+
+
+def _record_llm_usage(
+    usage: Any,
+    *,
+    provider_id: str | None,
+    provider_key: str | None,
+    provider_name: str | None,
+    model_name: str,
+    request_type: str,
+) -> None:
+    tokens = extract_llm_usage_tokens(usage)
+    if not tokens:
+        return
+    try:
+        from database import record_llm_token_usage
+
+        record_llm_token_usage(
+            provider_id=provider_id,
+            provider_key=provider_key,
+            provider_name=provider_name,
+            model_name=model_name,
+            request_type=request_type,
+            input_tokens=tokens.input_tokens,
+            output_tokens=tokens.output_tokens,
+            cache_input_tokens=tokens.cache_input_tokens,
+            cache_output_tokens=tokens.cache_output_tokens,
+            total_tokens=tokens.total_tokens,
+        )
+    except Exception as exc:
+        logger.warning("LLM token usage 记录失败: %s", exc)
 
 
 def _delta_to_dict(delta) -> dict:
@@ -73,6 +262,9 @@ class BaseLLM:
         return bool(self.api_key and self.api_key != MISSING_API_KEY_PLACEHOLDER)
 
     async def get_response(self, prompt: str, **kwargs) -> str:
+        params = dict(kwargs)
+        request_type = _pop_usage_context(params, "analysis")
+
         async def _call():
             response = await self.client.chat.completions.create(
                 model=self.model,
@@ -81,24 +273,50 @@ class BaseLLM:
                     {"role": "system", "content": "You are a helpful assistant for academic research."},
                     {"role": "user", "content": prompt + "\n\n" + PAPER_ANALYSIS_PROMPT}
                 ],
-            **kwargs)
+                **params,
+            )
+            _record_llm_usage(
+                _response_usage(response),
+                provider_id=None,
+                provider_key=None,
+                provider_name=self.__class__.__name__,
+                model_name=_response_model(response, self.model),
+                request_type=request_type,
+            )
             return response.choices[0].message.content
         return await retry_on_error(_call)
 
     async def get_response_stream_events(self, prompt: str, **kwargs):
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            temperature=1.0,
-            stream=True,
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant for academic research."},
-                {"role": "user", "content": prompt + "\n\n" + PAPER_ANALYSIS_PROMPT}
-            ],
-        **kwargs
+        params = dict(kwargs)
+        request_type = _pop_usage_context(params, "analysis_stream")
+        response = await _create_streaming_completion(
+            self.client,
+            {
+                "model": self.model,
+                "temperature": 1.0,
+                "stream": True,
+                "messages": [
+                    {"role": "system", "content": "You are a helpful assistant for academic research."},
+                    {"role": "user", "content": prompt + "\n\n" + PAPER_ANALYSIS_PROMPT}
+                ],
+                **params,
+            },
         )
+        usage = None
+        model_name = self.model
         async for chunk in response:
+            usage = _response_usage(chunk) or usage
+            model_name = _response_model(chunk, model_name)
             for stream_chunk in iter_llm_stream_chunks(chunk):
                 yield stream_chunk
+        _record_llm_usage(
+            usage,
+            provider_id=None,
+            provider_key=None,
+            provider_name=self.__class__.__name__,
+            model_name=model_name,
+            request_type=request_type,
+        )
 
     async def get_response_stream(self, prompt: str, **kwargs):
         async for stream_chunk in self.get_response_stream_events(prompt, **kwargs):
@@ -106,27 +324,55 @@ class BaseLLM:
                 yield stream_chunk.content
 
     async def chat(self, messages: list, **kwargs) -> str:
+        params = dict(kwargs)
+        request_type = _pop_usage_context(params, "chat")
+
         async def _call():
             response = await self.client.chat.completions.create(
                 model=self.model,
                 temperature=1.0,
                 messages=messages,
-                **kwargs
+                **params,
+            )
+            _record_llm_usage(
+                _response_usage(response),
+                provider_id=None,
+                provider_key=None,
+                provider_name=self.__class__.__name__,
+                model_name=_response_model(response, self.model),
+                request_type=request_type,
             )
             return response.choices[0].message.content
         return await retry_on_error(_call)
 
     async def chat_stream_events(self, messages: list, **kwargs):
-        response = await self.client.chat.completions.create(
-            model=self.model,
-            temperature=1.0,
-            stream=True,
-            messages=messages,
-            **kwargs
+        params = dict(kwargs)
+        request_type = _pop_usage_context(params, "chat_stream")
+        response = await _create_streaming_completion(
+            self.client,
+            {
+                "model": self.model,
+                "temperature": 1.0,
+                "stream": True,
+                "messages": messages,
+                **params,
+            },
         )
+        usage = None
+        model_name = self.model
         async for chunk in response:
+            usage = _response_usage(chunk) or usage
+            model_name = _response_model(chunk, model_name)
             for stream_chunk in iter_llm_stream_chunks(chunk):
                 yield stream_chunk
+        _record_llm_usage(
+            usage,
+            provider_id=None,
+            provider_key=None,
+            provider_name=self.__class__.__name__,
+            model_name=model_name,
+            request_type=request_type,
+        )
 
     async def chat_stream(self, messages: list, **kwargs):
         async for stream_chunk in self.chat_stream_events(messages, **kwargs):
@@ -156,7 +402,7 @@ class ManagedLLM:
 
     def _default_parameters(self, config: dict) -> dict:
         params = config.get("default_parameters") or {}
-        return params if isinstance(params, dict) else {}
+        return dict(params) if isinstance(params, dict) else {}
 
     def _require_config(self) -> dict:
         config = self._get_active_config()
@@ -177,6 +423,7 @@ class ManagedLLM:
         config = self._require_config()
         client = self._client_for_config(config)
         params = self._parameters(config, kwargs)
+        request_type = _pop_usage_context(params, "analysis")
 
         async def _call():
             response = await client.chat.completions.create(
@@ -188,6 +435,14 @@ class ManagedLLM:
                 ],
                 **params,
             )
+            _record_llm_usage(
+                _response_usage(response),
+                provider_id=str(config.get("id")) if config.get("id") else None,
+                provider_key=config.get("provider_key"),
+                provider_name=config.get("name"),
+                model_name=_response_model(response, config["model_name"]),
+                request_type=request_type,
+            )
             return response.choices[0].message.content
 
         return await retry_on_error(_call)
@@ -196,19 +451,35 @@ class ManagedLLM:
         config = self._require_config()
         client = self._client_for_config(config)
         params = self._parameters(config, kwargs)
-        response = await client.chat.completions.create(
-            model=config["model_name"],
-            temperature=1.0,
-            stream=True,
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant for academic research."},
-                {"role": "user", "content": prompt + "\n\n" + PAPER_ANALYSIS_PROMPT},
-            ],
-            **params,
+        request_type = _pop_usage_context(params, "analysis_stream")
+        response = await _create_streaming_completion(
+            client,
+            {
+                "model": config["model_name"],
+                "temperature": 1.0,
+                "stream": True,
+                "messages": [
+                    {"role": "system", "content": "You are a helpful assistant for academic research."},
+                    {"role": "user", "content": prompt + "\n\n" + PAPER_ANALYSIS_PROMPT},
+                ],
+                **params,
+            },
         )
+        usage = None
+        model_name = config["model_name"]
         async for chunk in response:
+            usage = _response_usage(chunk) or usage
+            model_name = _response_model(chunk, model_name)
             for stream_chunk in iter_llm_stream_chunks(chunk):
                 yield stream_chunk
+        _record_llm_usage(
+            usage,
+            provider_id=str(config.get("id")) if config.get("id") else None,
+            provider_key=config.get("provider_key"),
+            provider_name=config.get("name"),
+            model_name=model_name,
+            request_type=request_type,
+        )
 
     async def get_response_stream(self, prompt: str, **kwargs):
         async for stream_chunk in self.get_response_stream_events(prompt, **kwargs):
@@ -219,6 +490,7 @@ class ManagedLLM:
         config = self._require_config()
         client = self._client_for_config(config)
         params = self._parameters(config, kwargs)
+        request_type = _pop_usage_context(params, "chat")
 
         async def _call():
             response = await client.chat.completions.create(
@@ -226,6 +498,14 @@ class ManagedLLM:
                 temperature=1.0,
                 messages=messages,
                 **params,
+            )
+            _record_llm_usage(
+                _response_usage(response),
+                provider_id=str(config.get("id")) if config.get("id") else None,
+                provider_key=config.get("provider_key"),
+                provider_name=config.get("name"),
+                model_name=_response_model(response, config["model_name"]),
+                request_type=request_type,
             )
             return response.choices[0].message.content
 
@@ -235,16 +515,32 @@ class ManagedLLM:
         config = self._require_config()
         client = self._client_for_config(config)
         params = self._parameters(config, kwargs)
-        response = await client.chat.completions.create(
-            model=config["model_name"],
-            temperature=1.0,
-            stream=True,
-            messages=messages,
-            **params,
+        request_type = _pop_usage_context(params, "chat_stream")
+        response = await _create_streaming_completion(
+            client,
+            {
+                "model": config["model_name"],
+                "temperature": 1.0,
+                "stream": True,
+                "messages": messages,
+                **params,
+            },
         )
+        usage = None
+        model_name = config["model_name"]
         async for chunk in response:
+            usage = _response_usage(chunk) or usage
+            model_name = _response_model(chunk, model_name)
             for stream_chunk in iter_llm_stream_chunks(chunk):
                 yield stream_chunk
+        _record_llm_usage(
+            usage,
+            provider_id=str(config.get("id")) if config.get("id") else None,
+            provider_key=config.get("provider_key"),
+            provider_name=config.get("name"),
+            model_name=model_name,
+            request_type=request_type,
+        )
 
     async def chat_stream(self, messages: list, **kwargs):
         async for stream_chunk in self.chat_stream_events(messages, **kwargs):
@@ -263,6 +559,14 @@ class ManagedLLM:
                 temperature=0,
                 messages=messages,
                 **params,
+            )
+            _record_llm_usage(
+                _response_usage(response),
+                provider_id=str(config.get("id")) if config.get("id") else None,
+                provider_key=config.get("provider_key"),
+                provider_name=config.get("name"),
+                model_name=_response_model(response, config["model_name"]),
+                request_type="admin_test",
             )
             return response.choices[0].message.content or ""
 

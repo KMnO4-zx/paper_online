@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
+  Activity,
   Brain,
   KeyRound,
   Loader2,
@@ -40,6 +41,7 @@ import {
   addAdminLlmModel,
   createAdminLlmProvider,
   deleteAdminUser,
+  fetchAdminLlmTokenUsageMetrics,
   fetchAdminLlmModels,
   fetchAdminLlmProviders,
   fetchAdminOnlineMetrics,
@@ -53,7 +55,15 @@ import {
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { navigate } from '@/lib/router';
-import type { AdminLlmProvider, AdminOnlineMetrics, AdminUser, AdminUserListResponse, OnlineTrendPoint } from '@/types';
+import type {
+  AdminLlmProvider,
+  AdminLlmTokenUsageMetrics,
+  AdminOnlineMetrics,
+  AdminUser,
+  AdminUserListResponse,
+  LlmTokenUsageDailyTotal,
+  OnlineTrendPoint,
+} from '@/types';
 
 type LlmProviderDraft = {
   name: string;
@@ -70,6 +80,20 @@ function formatTrendTick(value: string, range: '24h' | '7d') {
   return range === '7d'
     ? parsed.toLocaleDateString([], { month: 'numeric', day: 'numeric' })
     : parsed.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+const tokenFormatter = new Intl.NumberFormat('en-US');
+
+function formatTokenCount(value: number | null | undefined) {
+  return tokenFormatter.format(value ?? 0);
+}
+
+function formatUsageDate(value: string) {
+  const parsed = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+  return parsed.toLocaleDateString([], { month: 'numeric', day: 'numeric' });
 }
 
 type OnlineTrendTooltipProps = {
@@ -111,10 +135,59 @@ function OnlineTrendTooltip({ active, label, payload }: OnlineTrendTooltipProps)
   );
 }
 
+type TokenUsageTooltipProps = {
+  active?: boolean;
+  label?: string | number;
+  payload?: Array<{
+    payload?: LlmTokenUsageDailyTotal;
+  }>;
+};
+
+function TokenUsageTooltip({ active, label, payload }: TokenUsageTooltipProps) {
+  if (!active || !payload?.length) {
+    return null;
+  }
+
+  const point = payload[0]?.payload;
+  if (!point) {
+    return null;
+  }
+
+  return (
+    <div className="min-w-48 rounded-2xl border border-slate-200/90 bg-white/95 p-3 text-sm shadow-[0_18px_40px_rgba(15,23,42,0.12)] backdrop-blur">
+      <div className="font-medium text-[#172033]">{formatUsageDate(String(label))}</div>
+      <div className="mt-2 space-y-1.5 text-[#475569]">
+        <div className="flex items-center justify-between gap-5">
+          <span>总 tokens</span>
+          <span className="font-semibold text-[#172033]">{formatTokenCount(point.total_tokens)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-5">
+          <span>Input</span>
+          <span>{formatTokenCount(point.input_tokens)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-5">
+          <span>Output</span>
+          <span>{formatTokenCount(point.output_tokens)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-5">
+          <span>Cache in</span>
+          <span>{formatTokenCount(point.cache_input_tokens)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-5">
+          <span>Cache out</span>
+          <span>{formatTokenCount(point.cache_output_tokens)}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AdminPage() {
   const { user, isLoading } = useAuth();
   const [range, setRange] = useState<'24h' | '7d'>('24h');
+  const [tokenUsageRange, setTokenUsageRange] = useState<'weekly' | 'monthly'>('weekly');
   const [metrics, setMetrics] = useState<AdminOnlineMetrics | null>(null);
+  const [tokenUsage, setTokenUsage] = useState<AdminLlmTokenUsageMetrics | null>(null);
   const [users, setUsers] = useState<AdminUserListResponse | null>(null);
   const [llmProviders, setLlmProviders] = useState<AdminLlmProvider[]>([]);
   const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string | null>(null);
@@ -165,12 +238,14 @@ export function AdminPage() {
     setIsRefreshing(true);
     setError(null);
     try {
-      const [nextMetrics, nextUsers, nextLlmProviders] = await Promise.all([
+      const [nextMetrics, nextTokenUsage, nextUsers, nextLlmProviders] = await Promise.all([
         fetchAdminOnlineMetrics(range),
+        fetchAdminLlmTokenUsageMetrics(),
         fetchAdminUsers(page, search),
         fetchAdminLlmProviders(),
       ]);
       setMetrics(nextMetrics);
+      setTokenUsage(nextTokenUsage);
       setUsers(nextUsers);
       setLlmProviders(nextLlmProviders.providers);
       setSelectedLlmProviderId((current) => {
@@ -218,6 +293,10 @@ export function AdminPage() {
     })
     : null;
   const trendData = metrics?.trend ?? [];
+  const selectedTokenUsage = tokenUsageRange === 'weekly' ? tokenUsage?.weekly : tokenUsage?.monthly;
+  const tokenDailyTotals = selectedTokenUsage?.daily_totals ?? [];
+  const tokenDailyRows = selectedTokenUsage?.daily ?? [];
+  const tokenTotals = selectedTokenUsage?.totals;
 
   if (isLoading) {
     return (
@@ -685,6 +764,161 @@ export function AdminPage() {
             {isCreatingProvider ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
             添加供应商
           </Button>
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-[32px] bg-white p-6 shadow-sm ring-1 ring-black/5">
+        <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <Activity className="h-5 w-5 text-[#0f766e]" />
+              <h2 className="text-xl font-semibold text-[#172033]">Token 消耗</h2>
+            </div>
+            <p className="mt-1 text-sm text-[#728095]">
+              {tokenUsage ? `时区：${tokenUsage.timezone}` : '暂无 token 记录'}
+            </p>
+          </div>
+          <div className="flex gap-2">
+            {(['weekly', 'monthly'] as const).map((item) => (
+              <Button
+                key={item}
+                variant={tokenUsageRange === item ? 'default' : 'outline'}
+                className="rounded-full"
+                onClick={() => setTokenUsageRange(item)}
+              >
+                {item === 'weekly' ? '最近一周' : '最近一个月'}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          {[
+            ['总 tokens', tokenTotals?.total_tokens],
+            ['Input', tokenTotals?.input_tokens],
+            ['Output', tokenTotals?.output_tokens],
+            ['Cache in', tokenTotals?.cache_input_tokens],
+            ['Cache out', tokenTotals?.cache_output_tokens],
+          ].map(([label, value]) => (
+            <div key={String(label)} className="rounded-2xl bg-[#f8fafc] px-4 py-3 ring-1 ring-[#e5eaf2]">
+              <div className="text-xs font-medium text-[#728095]">{label}</div>
+              <div className="mt-2 truncate text-2xl font-semibold text-[#172033]">
+                {formatTokenCount(Number(value ?? 0))}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5">
+          <div className="min-w-0">
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <div className="text-sm font-semibold text-[#172033]">每日总量</div>
+              <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-[#728095]">
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-sm bg-[#2563eb]" />
+                  Input
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-sm bg-[#10b981]" />
+                  Output
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-sm bg-[#f59e0b]" />
+                  Cache in
+                </span>
+                <span className="inline-flex items-center gap-2">
+                  <span className="h-2.5 w-2.5 rounded-sm bg-[#8b5cf6]" />
+                  Cache out
+                </span>
+              </div>
+            </div>
+            <div className="h-72">
+              {tokenDailyTotals.every((item) => item.total_tokens === 0) ? (
+                <div className="flex h-full items-center justify-center rounded-2xl border border-dashed border-slate-200 text-sm text-[#728095]">
+                  暂无 token 消耗
+                </div>
+              ) : (
+                <ResponsiveContainer width="100%" height="100%">
+                  <BarChart
+                    data={tokenDailyTotals}
+                    margin={{ top: 8, right: 18, left: -10, bottom: 0 }}
+                    barCategoryGap={tokenUsageRange === 'weekly' ? '42%' : '30%'}
+                  >
+                    <CartesianGrid vertical={false} strokeDasharray="4 8" stroke="#e7edf5" />
+                    <XAxis
+                      dataKey="date"
+                      tickFormatter={formatUsageDate}
+                      axisLine={false}
+                      tickLine={false}
+                      tickMargin={12}
+                      minTickGap={18}
+                      tick={{ fill: '#728095', fontSize: 12 }}
+                    />
+                    <YAxis
+                      allowDecimals={false}
+                      axisLine={false}
+                      tickLine={false}
+                      tickMargin={10}
+                      tickFormatter={(value) => formatTokenCount(Number(value))}
+                      tick={{ fill: '#728095', fontSize: 12 }}
+                    />
+                    <Tooltip
+                      cursor={{ fill: 'rgba(15, 118, 110, 0.06)' }}
+                      content={<TokenUsageTooltip />}
+                    />
+                    <Bar dataKey="input_tokens" stackId="tokens" fill="#2563eb" name="Input" maxBarSize={30} />
+                    <Bar dataKey="output_tokens" stackId="tokens" fill="#10b981" name="Output" maxBarSize={30} />
+                    <Bar dataKey="cache_input_tokens" stackId="tokens" fill="#f59e0b" name="Cache in" maxBarSize={30} />
+                    <Bar dataKey="cache_output_tokens" stackId="tokens" fill="#8b5cf6" name="Cache out" maxBarSize={30} radius={[6, 6, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              )}
+            </div>
+          </div>
+        </div>
+
+        <div className="mt-5">
+          <div className="mb-3 text-sm font-semibold text-[#172033]">每日模型明细</div>
+          <div className="max-h-96 overflow-auto rounded-2xl border border-[#e5eaf2]">
+            <table className="w-full min-w-[980px] text-left text-sm">
+              <thead className="sticky top-0 bg-[#f8fafc] text-xs text-[#728095]">
+                <tr>
+                  <th className="px-3 py-2">日期</th>
+                  <th className="px-3 py-2">模型</th>
+                  <th className="px-3 py-2">供应商</th>
+                  <th className="px-3 py-2 text-right">调用</th>
+                  <th className="px-3 py-2 text-right">Input</th>
+                  <th className="px-3 py-2 text-right">Output</th>
+                  <th className="px-3 py-2 text-right">Cache in</th>
+                  <th className="px-3 py-2 text-right">Cache out</th>
+                  <th className="px-3 py-2 text-right">总 tokens</th>
+                </tr>
+              </thead>
+              <tbody>
+                {tokenDailyRows.length === 0 ? (
+                  <tr>
+                    <td className="px-3 py-4 text-[#728095]" colSpan={9}>暂无 token 消耗</td>
+                  </tr>
+                ) : (
+                  tokenDailyRows.map((item) => (
+                    <tr key={`${item.date}:${item.provider_key ?? item.provider_name}:${item.model_name}`} className="border-t border-[#eef2f7]">
+                      <td className="px-3 py-2 text-[#475569]">{formatUsageDate(item.date)}</td>
+                      <td className="px-3 py-2">
+                        <div className="max-w-80 truncate font-medium text-[#172033]">{item.model_name}</div>
+                      </td>
+                      <td className="px-3 py-2 text-[#475569]">{item.provider_name}</td>
+                      <td className="px-3 py-2 text-right text-[#475569]">{formatTokenCount(item.request_count)}</td>
+                      <td className="px-3 py-2 text-right text-[#475569]">{formatTokenCount(item.input_tokens)}</td>
+                      <td className="px-3 py-2 text-right text-[#475569]">{formatTokenCount(item.output_tokens)}</td>
+                      <td className="px-3 py-2 text-right text-[#475569]">{formatTokenCount(item.cache_input_tokens)}</td>
+                      <td className="px-3 py-2 text-right text-[#475569]">{formatTokenCount(item.cache_output_tokens)}</td>
+                      <td className="px-3 py-2 text-right font-medium text-[#172033]">{formatTokenCount(item.total_tokens)}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
           </div>
         </div>
       </section>
