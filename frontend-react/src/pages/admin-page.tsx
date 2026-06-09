@@ -88,6 +88,16 @@ function formatTokenCount(value: number | null | undefined) {
   return tokenFormatter.format(value ?? 0);
 }
 
+function tokenDailyStackTotal(item: LlmTokenUsageDailyTotal) {
+  return item.input_tokens + item.output_tokens + item.cache_input_tokens + item.cache_output_tokens;
+}
+
+function tokenYAxisWidth(items: LlmTokenUsageDailyTotal[]) {
+  const maxValue = Math.max(0, ...items.map((item) => Math.max(item.total_tokens, tokenDailyStackTotal(item))));
+  const labelLength = formatTokenCount(maxValue).length;
+  return Math.min(Math.max(labelLength * 8 + 26, 56), 112);
+}
+
 function formatUsageDate(value: string) {
   const parsed = new Date(`${value}T00:00:00`);
   if (Number.isNaN(parsed.getTime())) {
@@ -297,6 +307,7 @@ export function AdminPage() {
   const tokenDailyTotals = selectedTokenUsage?.daily_totals ?? [];
   const tokenDailyRows = selectedTokenUsage?.daily ?? [];
   const tokenTotals = selectedTokenUsage?.totals;
+  const tokenAxisWidth = tokenYAxisWidth(tokenDailyTotals);
 
   if (isLoading) {
     return (
@@ -842,7 +853,7 @@ export function AdminPage() {
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
                     data={tokenDailyTotals}
-                    margin={{ top: 8, right: 18, left: -10, bottom: 0 }}
+                    margin={{ top: 8, right: 18, left: 8, bottom: 0 }}
                     barCategoryGap={tokenUsageRange === 'weekly' ? '42%' : '30%'}
                   >
                     <CartesianGrid vertical={false} strokeDasharray="4 8" stroke="#e7edf5" />
@@ -860,6 +871,7 @@ export function AdminPage() {
                       axisLine={false}
                       tickLine={false}
                       tickMargin={10}
+                      width={tokenAxisWidth}
                       tickFormatter={(value) => formatTokenCount(Number(value))}
                       tick={{ fill: '#728095', fontSize: 12 }}
                     />
