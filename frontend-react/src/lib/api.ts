@@ -35,6 +35,14 @@ export function apiUrl(path: string): string {
   return path.startsWith('/') ? `${API_BASE}${path}` : path;
 }
 
+export function paperApiPath(paperId: string, suffix = ''): string {
+  return `/paper/${encodeURIComponent(paperId)}${suffix}`;
+}
+
+function paperMarkApiPath(paperId: string): string {
+  return `/papers/${encodeURIComponent(paperId)}/mark`;
+}
+
 export function githubAuthUrl(nextPath = '/'): string {
   const params = new URLSearchParams({ next: nextPath });
   return apiUrl(`/auth/github/start?${params.toString()}`);
@@ -98,7 +106,7 @@ async function apiFetch<T>(input: RequestInfo | URL, init: RequestInit = {}): Pr
 }
 
 export async function fetchPaperInfo(paperId: string): Promise<Paper> {
-  return apiFetch<Paper>(`/paper/${paperId}/info`);
+  return apiFetch<Paper>(paperApiPath(paperId, '/info'));
 }
 
 export async function fetchConferencePapers(
@@ -129,8 +137,37 @@ export async function fetchHfDailyPapers(
   return apiFetch<PaperListResponse>(`/hf-daily-papers?${params.toString()}`);
 }
 
+export async function createArxivPaper(input: string): Promise<Paper> {
+  const payload = await apiFetch<{ paper: Paper }>('/arxiv-papers', {
+    method: 'POST',
+    body: JSON.stringify({ input }),
+  });
+  return payload.paper;
+}
+
+const DEFAULT_SEARCH_FILTERS: SearchFilters = {
+  title: true,
+  abstract: true,
+  keywords: true,
+};
+
+export async function fetchArxivPapers(
+  page: number,
+  query = '',
+  filters: SearchFilters = DEFAULT_SEARCH_FILTERS,
+  limit = 8,
+): Promise<PaperListResponse> {
+  const params = buildSearchRequestParams(page, query, filters);
+  params.set('limit', String(limit));
+  return apiFetch<PaperListResponse>(`/arxiv-papers?${params.toString()}`);
+}
+
+export async function fetchRecentArxivPapers(limit = 6): Promise<PaperListResponse> {
+  return fetchArxivPapers(1, '', DEFAULT_SEARCH_FILTERS, limit);
+}
+
 export async function fetchChatSessions(paperId: string): Promise<ChatSessionSummary[]> {
-  const response = await apiRequest(`/paper/${paperId}/chat/sessions`);
+  const response = await apiRequest(paperApiPath(paperId, '/chat/sessions'));
   if (response.status === 401) {
     return [];
   }
@@ -241,7 +278,7 @@ export async function updatePaperMark(
   paperId: string,
   mark: Partial<PaperMark>,
 ): Promise<PaperMark> {
-  return apiFetch<PaperMark>(`/papers/${paperId}/mark`, {
+  return apiFetch<PaperMark>(paperMarkApiPath(paperId), {
     method: 'PUT',
     body: JSON.stringify(mark),
   });

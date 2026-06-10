@@ -2,6 +2,7 @@ import { SiteNavbar } from '@/components/site-navbar';
 import { HomePage } from '@/pages/home-page';
 import { ConferencePage } from '@/pages/conference-page';
 import { HfDailyPage } from '@/pages/hf-daily-page';
+import { ArxivPage } from '@/pages/arxiv-page';
 import { PaperPage } from '@/pages/paper-page';
 import { SearchPage } from '@/pages/search-page';
 import { AdminPage } from '@/pages/admin-page';
@@ -19,6 +20,8 @@ function App() {
     content = <SearchPage />;
   } else if (pathname === '/hf-daily') {
     content = <HfDailyPage />;
+  } else if (pathname === '/arxiv') {
+    content = <ArxivPage />;
   } else if (pathname === '/login') {
     content = <AuthPage mode="login" />;
   } else if (pathname === '/register') {
@@ -31,7 +34,7 @@ function App() {
     const venue = pathname.replace('/conference/', '').split('/')[0];
     content = <ConferencePage venue={venue} />;
   } else if (pathname.startsWith('/papers/')) {
-    const paperId = pathname.replace('/papers/', '').split('/')[0];
+    const paperId = decodeURIComponent(pathname.replace('/papers/', '').split('/')[0]);
     content = <PaperPage paperId={paperId} />;
   }
 

@@ -28,6 +28,8 @@ function getConferenceColor(conference: string) {
       return 'bg-emerald-50 text-emerald-700 border-emerald-200';
     case 'Hugging Face':
       return 'bg-amber-50 text-amber-700 border-amber-200';
+    case 'arXiv':
+      return 'bg-cyan-50 text-cyan-700 border-cyan-200';
     default:
       return 'bg-slate-100 text-slate-700 border-slate-200';
   }
@@ -44,6 +46,17 @@ function getKeywordColor(index: number) {
   return colors[index % colors.length];
 }
 
+function formatDate(value?: string | null): string | null {
+  if (!value) {
+    return null;
+  }
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value.slice(0, 10);
+  }
+  return parsed.toISOString().slice(0, 10);
+}
+
 export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
   const { user, isLoading } = useAuth();
   const [marks, setMarks] = useState(EMPTY_MARKS);
@@ -51,7 +64,9 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
   const keywords = normalizeKeywords(paper.keywords).slice(0, 6);
   const venue = getVenueParts(paper.venue);
   const isHfDaily = venue.conference === 'Hugging Face';
+  const isArxiv = venue.conference === 'arXiv';
   const hfDailyDateLabel = paper.hf_daily?.daily_date ?? null;
+  const arxivPublishedLabel = formatDate(paper.arxiv?.published_at);
 
   useEffect(() => {
     let active = true;
@@ -142,6 +157,13 @@ export function PaperCard({ paper, index, onOpen }: PaperCardProps) {
         <div className="mb-4 flex items-center gap-1.5 text-xs text-[#728095]">
           <CalendarDays className="h-3.5 w-3.5 text-[#ff9900]" />
           HF Daily 日期：{hfDailyDateLabel}
+        </div>
+      ) : null}
+
+      {isArxiv && arxivPublishedLabel ? (
+        <div className="mb-4 flex items-center gap-1.5 text-xs text-[#728095]">
+          <CalendarDays className="h-3.5 w-3.5 text-[#0891b2]" />
+          arXiv 首发：{arxivPublishedLabel}
         </div>
       ) : null}
 

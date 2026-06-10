@@ -12,6 +12,7 @@ export interface Paper {
   llm_response?: string | null;
   created_at?: string;
   hf_daily?: HfDailyPaperMeta | null;
+  arxiv?: ArxivPaperMeta | null;
   openReviewUrl?: string;
   pdfUrl?: string;
   hasSeen?: boolean;
@@ -29,6 +30,17 @@ export interface HfDailyPaperMeta {
   github_repo?: string | null;
   github_stars?: number | null;
   num_comments?: number | null;
+}
+
+export interface ArxivPaperMeta {
+  arxiv_id?: string | null;
+  arxiv_url?: string | null;
+  pdf_url?: string | null;
+  published_at?: string | null;
+  updated_at?: string | null;
+  added_at?: string | null;
+  added_by_user_id?: string | null;
+  metadata?: Record<string, unknown>;
 }
 
 export interface Conference {

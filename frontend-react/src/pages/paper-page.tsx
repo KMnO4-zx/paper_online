@@ -13,7 +13,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ReasoningStreamPanel } from '@/components/reasoning-stream-panel';
 import { RichContent } from '@/components/rich-content';
-import { fetchPaperInfo, fetchPaperMarks, streamSse, updatePaperMark } from '@/lib/api';
+import { fetchPaperInfo, fetchPaperMarks, paperApiPath, streamSse, updatePaperMark } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { getVenueParts, normalizeKeywords } from '@/lib/content';
 import { navigate } from '@/lib/router';
@@ -170,7 +170,7 @@ export function PaperPage({ paperId }: PaperPageProps) {
 
     try {
       await streamSse(
-        `/paper/${paperId}${reanalyze ? '?reanalyze=true' : ''}`,
+        paperApiPath(paperId, reanalyze ? '?reanalyze=true' : ''),
         { method: 'GET', signal: controller.signal },
         {
           onChunk: (chunk) => {

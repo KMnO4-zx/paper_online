@@ -1,4 +1,5 @@
 import json
+import io
 import os
 import requests
 import logging
@@ -7,7 +8,10 @@ import tiktoken
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import urlparse
 from config import settings
+from pypdf import PdfReader
+from pypdf.errors import PdfReadError
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,6 +19,7 @@ logger = logging.getLogger(__name__)
 TIMEOUT = 30
 MAX_RETRIES = 3
 LLM_CONTENT_TOKEN_LIMIT = 180000
+MIN_EXTRACTED_PDF_TEXT_CHARS = 200
 _TOKEN_ENCODING = tiktoken.get_encoding("cl100k_base")
 
 HEADERS = {
@@ -22,6 +27,10 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36",
     "Referer": "https://openreview.net/",
     "Origin": "https://openreview.net"
+}
+PDF_HEADERS = {
+    "Accept": "application/pdf,*/*;q=0.8",
+    "User-Agent": HEADERS["User-Agent"],
 }
 
 DEFAULT_PAPER_CACHE_DIR = Path(__file__).resolve().parent.parent / "data" / "paper_cache"
@@ -131,7 +140,7 @@ def _atomic_write_text(path: Path, content: str) -> None:
     tmp_path.replace(path)
 
 
-def cache_paper_content(paper_id: str, pdf_url: str, content: str) -> None:
+def cache_paper_content(paper_id: str, pdf_url: str, content: str, source: str = "jina_reader") -> None:
     if not content.strip():
         logger.warning("论文正文为空，跳过缓存: %s", paper_id)
         return
@@ -141,7 +150,7 @@ def cache_paper_content(paper_id: str, pdf_url: str, content: str) -> None:
     metadata = {
         "paper_id": paper_id,
         "pdf_url": normalized_pdf_url,
-        "source": "jina_reader",
+        "source": source,
         "cached_at": datetime.now(timezone.utc).isoformat(),
         "size_bytes": len(content.encode("utf-8")),
     }
@@ -163,8 +172,25 @@ def get_or_cache_paper_content(paper_id: str, pdf_url: str) -> str:
     if cached_content is not None:
         return cached_content
 
-    content = reader(normalized_pdf_url)
-    cache_paper_content(paper_id, normalized_pdf_url, content)
+    source = "jina_reader"
+    try:
+        content = reader(normalized_pdf_url)
+    except ReaderError as jina_error:
+        if not _looks_like_pdf_url(normalized_pdf_url):
+            raise
+        logger.warning(
+            "Jina Reader 读取失败，改用本地 PDF 文本抽取: paper_id=%s url=%s error=%s",
+            paper_id,
+            normalized_pdf_url,
+            jina_error,
+        )
+        try:
+            content = extract_pdf_text_from_url(normalized_pdf_url)
+            source = "pdf_text_extractor"
+        except ReaderError as pdf_error:
+            raise ReaderError(f"{jina_error}；PDF 直连解析也失败: {pdf_error}") from pdf_error
+
+    cache_paper_content(paper_id, normalized_pdf_url, content, source=source)
     return content
 
 
@@ -189,6 +215,7 @@ def truncate_content_for_llm(text: str, max_tokens: int = LLM_CONTENT_TOKEN_LIMI
 
 def reader(url: str) -> str:
     target_url = "https://r.jina.ai/" + url
+    last_error: str | None = None
 
     for attempt in range(MAX_RETRIES):
         try:
@@ -196,14 +223,79 @@ def reader(url: str) -> str:
             response.raise_for_status()
             return response.text
         except requests.Timeout:
+            last_error = "请求超时"
             logger.warning(f"Jina Reader 超时 (尝试 {attempt + 1}/{MAX_RETRIES})")
         except requests.RequestException as e:
+            last_error = str(e)
             logger.warning(f"Jina Reader 请求失败: {e} (尝试 {attempt + 1}/{MAX_RETRIES})")
 
         if attempt < MAX_RETRIES - 1:
             time.sleep(2 ** attempt)
 
-    raise ReaderError(f"Jina Reader 请求失败，已重试 {MAX_RETRIES} 次: {url}")
+    detail = f"（最后错误：{last_error}）" if last_error else ""
+    raise ReaderError(f"Jina Reader 请求失败，已重试 {MAX_RETRIES} 次: {url}{detail}")
+
+
+def _looks_like_pdf_url(url: str) -> bool:
+    parsed = urlparse(url)
+    path = parsed.path.lower().rstrip("/")
+    return path.endswith(".pdf") or path.endswith("/pdf") or "/pdf/" in path
+
+
+def extract_pdf_text_from_url(url: str) -> str:
+    last_error: str | None = None
+
+    for attempt in range(MAX_RETRIES):
+        try:
+            response = requests.get(url, headers=PDF_HEADERS, timeout=TIMEOUT)
+            response.raise_for_status()
+            content_type = response.headers.get("content-type", "")
+            if "pdf" not in content_type.lower() and not response.content.startswith(b"%PDF"):
+                raise ReaderError(f"URL 返回的不是 PDF: content-type={content_type or 'unknown'}")
+            return extract_pdf_text(response.content, url)
+        except ReaderError:
+            raise
+        except requests.Timeout:
+            last_error = "请求超时"
+            logger.warning(f"PDF 下载超时 (尝试 {attempt + 1}/{MAX_RETRIES}): {url}")
+        except requests.RequestException as e:
+            last_error = str(e)
+            logger.warning(f"PDF 下载失败: {e} (尝试 {attempt + 1}/{MAX_RETRIES}): {url}")
+
+        if attempt < MAX_RETRIES - 1:
+            time.sleep(2 ** attempt)
+
+    detail = f"（最后错误：{last_error}）" if last_error else ""
+    raise ReaderError(f"PDF 下载失败，已重试 {MAX_RETRIES} 次: {url}{detail}")
+
+
+def extract_pdf_text(pdf_bytes: bytes, source_url: str = "") -> str:
+    try:
+        pdf = PdfReader(io.BytesIO(pdf_bytes))
+    except PdfReadError as exc:
+        raise ReaderError(f"PDF 解析失败: {source_url or 'unknown source'}") from exc
+
+    if pdf.is_encrypted:
+        try:
+            pdf.decrypt("")
+        except Exception as exc:
+            raise ReaderError(f"PDF 加密且无法解密: {source_url or 'unknown source'}") from exc
+
+    pages: list[str] = []
+    for index, page in enumerate(pdf.pages, start=1):
+        try:
+            page_text = page.extract_text() or ""
+        except Exception as exc:
+            logger.warning("PDF 第 %s 页文本抽取失败: %s", index, exc)
+            continue
+        page_text = page_text.strip()
+        if page_text:
+            pages.append(page_text)
+
+    content = "\n\n".join(pages).strip()
+    if len(content) < MIN_EXTRACTED_PDF_TEXT_CHARS:
+        raise ReaderError(f"PDF 文本抽取结果过短: {source_url or 'unknown source'}")
+    return content
 
 def get_openreview_info(paper_id: str) -> dict | None:
     url = f"https://api2.openreview.net/notes?id={paper_id}"

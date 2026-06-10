@@ -155,6 +155,48 @@ def _fetch_keywords_for_papers(conn: psycopg.Connection, paper_ids: list[str]) -
     return keywords_by_paper
 
 
+def _arxiv_meta_from_row(row: dict | None) -> dict | None:
+    if not row:
+        return None
+    return {
+        "arxiv_id": row.get("arxiv_id"),
+        "arxiv_url": row.get("arxiv_url"),
+        "pdf_url": row.get("pdf_url"),
+        "published_at": row.get("published_at"),
+        "updated_at": row.get("updated_at"),
+        "added_at": row.get("added_at"),
+        "added_by_user_id": str(row["added_by_user_id"]) if row.get("added_by_user_id") else None,
+        "metadata": row.get("metadata") or {},
+    }
+
+
+def _paper_from_arxiv_row(row: dict) -> dict:
+    paper = {
+        "id": row["id"],
+        "title": row.get("title"),
+        "abstract": row.get("abstract"),
+        "keywords": row.get("keywords") or [],
+        "pdf": normalize_paper_pdf_url(row["id"], row.get("pdf")) or row.get("arxiv_pdf_url"),
+        "venue": row.get("venue"),
+        "primary_area": row.get("primary_area"),
+        "llm_response": row.get("llm_response"),
+        "created_at": row.get("created_at"),
+        "arxiv": _arxiv_meta_from_row(
+            {
+                "arxiv_id": row.get("arxiv_id"),
+                "arxiv_url": row.get("arxiv_url"),
+                "pdf_url": row.get("arxiv_pdf_url"),
+                "published_at": row.get("arxiv_published_at"),
+                "updated_at": row.get("arxiv_updated_at"),
+                "added_at": row.get("arxiv_added_at"),
+                "added_by_user_id": row.get("arxiv_added_by_user_id"),
+                "metadata": row.get("arxiv_metadata"),
+            }
+        ),
+    }
+    return paper
+
+
 def get_paper(paper_id: str) -> dict | None:
     if not DATABASE_URL:
         return None
@@ -189,6 +231,24 @@ def get_paper(paper_id: str) -> dict | None:
                 )
                 paper["keywords"] = [row["keyword"] for row in cur.fetchall()]
                 paper["pdf"] = normalize_paper_pdf_url(paper_id, paper.get("pdf")) or get_openreview_pdf_url(paper_id)
+                cur.execute(
+                    """
+                    SELECT arxiv_id,
+                           arxiv_url,
+                           pdf_url,
+                           published_at,
+                           arxiv_updated_at AS updated_at,
+                           added_at,
+                           added_by_user_id,
+                           metadata
+                    FROM arxiv_papers
+                    WHERE paper_id = %s
+                    """,
+                    (paper_id,),
+                )
+                arxiv_meta = _arxiv_meta_from_row(cur.fetchone())
+                if arxiv_meta:
+                    paper["arxiv"] = arxiv_meta
                 return paper
 
     return _run_with_retry(operation, f"get_paper:{paper_id}")
@@ -264,6 +324,156 @@ def save_paper(paper_info: dict, llm_response: str = None):
             conn.commit()
 
     _run_with_retry(operation, f"save_paper:{paper_info['id']}")
+
+
+def upsert_arxiv_paper(
+    paper_info: dict,
+    arxiv_info: dict,
+    added_by_user_id: str | None = None,
+) -> dict:
+    if not DATABASE_URL:
+        return {
+            **paper_info,
+            "arxiv": _arxiv_meta_from_row(
+                {
+                    "arxiv_id": arxiv_info.get("arxiv_id"),
+                    "arxiv_url": arxiv_info.get("arxiv_url"),
+                    "pdf_url": arxiv_info.get("pdf_url"),
+                    "published_at": arxiv_info.get("published_at"),
+                    "updated_at": arxiv_info.get("updated_at"),
+                    "added_at": None,
+                    "added_by_user_id": added_by_user_id,
+                    "metadata": arxiv_info.get("raw") or {},
+                }
+            ),
+        }
+
+    def operation() -> dict:
+        paper_id = paper_info["id"]
+        normalized_pdf = normalize_paper_pdf_url(paper_id, paper_info.get("pdf"))
+        arxiv_metadata = {
+            "primary_category": arxiv_info.get("primary_category"),
+            "categories": arxiv_info.get("categories") or [],
+            "comment": arxiv_info.get("comment"),
+            "journal_ref": arxiv_info.get("journal_ref"),
+            "doi": arxiv_info.get("doi"),
+            "raw": arxiv_info.get("raw") or {},
+        }
+
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO papers (
+                        id,
+                        title,
+                        abstract,
+                        keywords,
+                        pdf,
+                        venue,
+                        primary_area
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (id) DO UPDATE SET
+                        title = EXCLUDED.title,
+                        abstract = EXCLUDED.abstract,
+                        keywords = EXCLUDED.keywords,
+                        pdf = EXCLUDED.pdf,
+                        venue = EXCLUDED.venue,
+                        primary_area = EXCLUDED.primary_area
+                    RETURNING *
+                    """,
+                    (
+                        paper_id,
+                        paper_info.get("title"),
+                        paper_info.get("abstract"),
+                        Jsonb(paper_info.get("keywords", [])),
+                        normalized_pdf,
+                        paper_info.get("venue"),
+                        paper_info.get("primary_area"),
+                    ),
+                )
+                paper = cur.fetchone()
+
+                cur.execute("DELETE FROM authors WHERE paper_id = %s", (paper_id,))
+                authors = paper_info.get("authors", [])
+                if authors:
+                    cur.executemany(
+                        """
+                        INSERT INTO authors (paper_id, author_name, author_order)
+                        VALUES (%s, %s, %s)
+                        """,
+                        [(paper_id, author, index) for index, author in enumerate(authors)],
+                    )
+
+                cur.execute("DELETE FROM keywords WHERE paper_id = %s", (paper_id,))
+                keywords = paper_info.get("keywords", [])
+                if keywords:
+                    cur.executemany(
+                        """
+                        INSERT INTO keywords (paper_id, keyword)
+                        VALUES (%s, %s)
+                        """,
+                        [(paper_id, keyword) for keyword in keywords],
+                    )
+
+                cur.execute(
+                    """
+                    INSERT INTO arxiv_papers (
+                        paper_id,
+                        arxiv_id,
+                        arxiv_url,
+                        pdf_url,
+                        published_at,
+                        arxiv_updated_at,
+                        added_by_user_id,
+                        added_at,
+                        metadata
+                    )
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, NOW(), %s)
+                    ON CONFLICT (arxiv_id) DO UPDATE SET
+                        paper_id = EXCLUDED.paper_id,
+                        arxiv_url = EXCLUDED.arxiv_url,
+                        pdf_url = EXCLUDED.pdf_url,
+                        published_at = EXCLUDED.published_at,
+                        arxiv_updated_at = EXCLUDED.arxiv_updated_at,
+                        added_by_user_id = COALESCE(EXCLUDED.added_by_user_id, arxiv_papers.added_by_user_id),
+                        added_at = NOW(),
+                        metadata = EXCLUDED.metadata,
+                        updated_at = NOW()
+                    RETURNING arxiv_id,
+                              arxiv_url,
+                              pdf_url,
+                              published_at,
+                              arxiv_updated_at AS updated_at,
+                              added_at,
+                              added_by_user_id,
+                              metadata
+                    """,
+                    (
+                        paper_id,
+                        arxiv_info["arxiv_id"],
+                        arxiv_info.get("arxiv_url"),
+                        arxiv_info.get("pdf_url"),
+                        arxiv_info.get("published_at"),
+                        arxiv_info.get("updated_at"),
+                        added_by_user_id,
+                        Jsonb(arxiv_metadata),
+                    ),
+                )
+                arxiv_row = cur.fetchone()
+
+            conn.commit()
+
+        _conference_cache.clear()
+        _cache_timestamp.clear()
+        paper["authors"] = authors
+        paper["keywords"] = keywords
+        paper["pdf"] = normalize_paper_pdf_url(paper_id, paper.get("pdf")) or paper.get("pdf")
+        paper["arxiv"] = _arxiv_meta_from_row(arxiv_row)
+        return paper
+
+    return _run_with_retry(operation, f"upsert_arxiv_paper:{paper_info['id']}")
 
 
 def upsert_hf_daily_papers(daily_date: date, entries: list[dict]) -> list[str]:
@@ -2689,6 +2899,90 @@ def get_hf_daily_papers(
         return papers, total
 
     return _run_with_retry(operation, "get_hf_daily_papers")
+
+
+def get_arxiv_papers(
+    offset: int,
+    limit: int,
+    analyzed_only: bool = True,
+    search: str = None,
+    search_title: bool = True,
+    search_abstract: bool = True,
+    search_keywords: bool = True,
+) -> tuple[list[dict], int]:
+    if not DATABASE_URL:
+        return [], 0
+
+    if search and not (search_title or search_abstract or search_keywords):
+        return [], 0
+
+    def operation() -> tuple[list[dict], int]:
+        where_parts: list[str] = []
+        params: list[object] = []
+        if analyzed_only:
+            where_parts.append("p.llm_response IS NOT NULL")
+        if search:
+            search_parts = []
+            if search_title:
+                search_parts.append("p.title ILIKE %s")
+                params.append(f"%{search}%")
+            if search_abstract:
+                search_parts.append("p.abstract ILIKE %s")
+                params.append(f"%{search}%")
+            if search_keywords:
+                search_parts.append(
+                    """
+                    EXISTS (
+                        SELECT 1
+                        FROM keywords
+                        WHERE keywords.paper_id = p.id
+                          AND keywords.keyword ILIKE %s
+                    )
+                    """
+                )
+                params.append(f"%{search}%")
+            where_parts.append(f"({' OR '.join(search_parts)})")
+
+        where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    f"""
+                    SELECT COUNT(*) AS total
+                    FROM arxiv_papers a
+                    JOIN papers p ON p.id = a.paper_id
+                    {where_clause}
+                    """,
+                    params,
+                )
+                total = int(cur.fetchone()["total"] or 0)
+
+                cur.execute(
+                    f"""
+                    SELECT p.*,
+                           a.arxiv_id,
+                           a.arxiv_url,
+                           a.pdf_url AS arxiv_pdf_url,
+                           a.published_at AS arxiv_published_at,
+                           a.arxiv_updated_at AS arxiv_updated_at,
+                           a.added_at AS arxiv_added_at,
+                           a.added_by_user_id AS arxiv_added_by_user_id,
+                           a.metadata AS arxiv_metadata
+                    FROM arxiv_papers a
+                    JOIN papers p ON p.id = a.paper_id
+                    {where_clause}
+                    ORDER BY a.added_at DESC, a.id DESC
+                    LIMIT %s OFFSET %s
+                    """,
+                    [*params, limit, offset],
+                )
+                rows = cur.fetchall()
+
+        papers = [_paper_from_arxiv_row(row) for row in rows]
+        papers, _ = _load_keywords_for_papers(papers)
+        return papers, total
+
+    return _run_with_retry(operation, f"get_arxiv_papers:{offset}:{limit}:{analyzed_only}:{search}")
 
 
 def get_unanalyzed_papers(limit: int = 10) -> list:

@@ -59,3 +59,39 @@ def test_get_or_cache_paper_content_hits_reader_once(tmp_path, monkeypatch):
     assert first == "body from reader"
     assert second == "body from reader"
     assert calls == [pdf_url]
+
+
+def test_get_or_cache_paper_content_falls_back_to_pdf_text_extractor(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        utils,
+        "settings",
+        SimpleNamespace(paths=SimpleNamespace(paper_content_cache_dir=str(tmp_path))),
+    )
+
+    reader_calls: list[str] = []
+    extractor_calls: list[str] = []
+
+    def fake_reader(url: str) -> str:
+        reader_calls.append(url)
+        raise utils.ReaderError("Jina Reader 401")
+
+    def fake_extract_pdf_text_from_url(url: str) -> str:
+        extractor_calls.append(url)
+        return "body from local pdf extraction"
+
+    monkeypatch.setattr(utils, "reader", fake_reader)
+    monkeypatch.setattr(utils, "extract_pdf_text_from_url", fake_extract_pdf_text_from_url)
+
+    paper_id = "arxiv:2605.07250"
+    pdf_url = "https://arxiv.org/pdf/2605.07250v1"
+
+    content = utils.get_or_cache_paper_content(paper_id, pdf_url)
+
+    assert content == "body from local pdf extraction"
+    assert reader_calls == [pdf_url]
+    assert extractor_calls == [pdf_url]
+
+    meta_files = list(tmp_path.glob("*.meta.json"))
+    assert len(meta_files) == 1
+    metadata = json.loads(meta_files[0].read_text(encoding="utf-8"))
+    assert metadata["source"] == "pdf_text_extractor"

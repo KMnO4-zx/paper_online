@@ -13,7 +13,7 @@ import {
 } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
-import { deleteChatSession, fetchChatMessages, fetchChatSessions, streamSse } from '@/lib/api';
+import { deleteChatSession, fetchChatMessages, fetchChatSessions, paperApiPath, streamSse } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { navigate } from '@/lib/router';
 import { ReasoningStreamPanel } from '@/components/reasoning-stream-panel';
@@ -233,7 +233,7 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
     setStreamingAssistantId(assistantId);
 
     try {
-      await sendStream(`/paper/${paperId}/chat`, {
+      await sendStream(paperApiPath(paperId, '/chat'), {
         message: trimmed,
         session_id: sessionId,
       }, assistantId);
@@ -281,7 +281,7 @@ export function ChatPanel({ paperId }: ChatPanelProps) {
     setStreamingAssistantId(assistantId);
 
     try {
-      await sendStream(`/paper/${paperId}/chat/regenerate`, {
+      await sendStream(paperApiPath(paperId, '/chat/regenerate'), {
         message: lastUserMessage,
         session_id: currentSessionId,
       }, assistantId);

@@ -1,9 +1,11 @@
-import { ArrowRight, CalendarDays, Sparkles } from 'lucide-react';
+import { ArrowRight, CalendarDays, FileText, Loader2, Sparkles } from 'lucide-react';
 import { useState } from 'react';
 
 import { Button } from '@/components/ui/button';
 import { SearchControls } from '@/components/search-controls';
 import { CONFERENCES } from '@/lib/constants';
+import { createArxivPaper } from '@/lib/api';
+import { extractArxivId } from '@/lib/arxiv';
 import { applyFilters, buildQueryString, navigate } from '@/lib/router';
 import type { SearchFilters } from '@/types';
 
@@ -14,20 +16,40 @@ export function HomePage() {
     abstract: true,
     keywords: true,
   });
+  const [isAddingArxiv, setIsAddingArxiv] = useState(false);
+  const [arxivSubmitError, setArxivSubmitError] = useState<string | null>(null);
+  const detectedArxivId = extractArxivId(query);
 
-  const submitSearch = () => {
-    if (!query.trim()) {
+  const submitSearch = async () => {
+    const trimmedQuery = query.trim();
+    if (!trimmedQuery || isAddingArxiv) {
       return;
     }
 
+    const arxivId = extractArxivId(trimmedQuery);
+    if (arxivId) {
+      setIsAddingArxiv(true);
+      setArxivSubmitError(null);
+      try {
+        const paper = await createArxivPaper(trimmedQuery);
+        navigate(`/papers/${encodeURIComponent(paper.id)}`);
+      } catch (error) {
+        setArxivSubmitError(error instanceof Error ? error.message : 'arXiv 论文加载失败');
+      } finally {
+        setIsAddingArxiv(false);
+      }
+      return;
+    }
+
+    setArxivSubmitError(null);
     const params = applyFilters(new URLSearchParams(), filters);
-    params.set('q', query.trim());
+    params.set('q', trimmedQuery);
     navigate(`/search${buildQueryString(params)}`);
   };
 
   return (
     <div className="mx-auto max-w-7xl animate-fade-in">
-      <section className="grid items-center gap-8 py-10 lg:grid-cols-[1.1fr_0.9fr]">
+      <section className="grid items-start gap-10 py-10 lg:grid-cols-[1.05fr_0.95fr] lg:gap-14">
         <div className="space-y-6">
           <div className="flex items-center gap-4">
             <img
@@ -56,17 +78,32 @@ export function HomePage() {
           </div>
         </div>
 
-        <div className="relative">
-          <div className="absolute inset-0 rounded-[32px] bg-gradient-to-br from-[#ffe7b5] via-[#fff4d6] to-[#d9efff] blur-3xl" />
-          <div className="relative rounded-[32px] border border-white/70 bg-white/60 p-4 backdrop-blur-sm">
-            <SearchControls
-              query={query}
-              filters={filters}
-              onQueryChange={setQuery}
-              onFiltersChange={setFilters}
-              onSubmit={submitSearch}
-              placeholder="输入关键词搜索所有会议论文..."
-            />
+        <div className="relative lg:pt-16 xl:pt-20">
+          <div className="absolute -inset-10 rounded-[48px] bg-gradient-to-br from-[#ffe7b5] via-[#fff7df] to-[#d9efff] opacity-80 blur-3xl" />
+          <div className="relative ml-auto max-w-[48rem] rounded-[40px] bg-gradient-to-br from-white/75 via-[#fffaf0]/70 to-[#edfaff]/75 p-4 shadow-[0_24px_72px_rgba(148,163,184,0.24)] ring-1 ring-white/70 backdrop-blur-sm sm:p-5 lg:p-6">
+            <div className="w-full">
+              <SearchControls
+                query={query}
+                filters={filters}
+                onQueryChange={setQuery}
+                onFiltersChange={setFilters}
+                onSubmit={submitSearch}
+                placeholder="搜索会议论文，或粘贴 arXiv 链接 / ID..."
+                submitLabel={detectedArxivId ? (isAddingArxiv ? '准备分析' : '分析 arXiv') : '搜索'}
+                hero
+              />
+              {arxivSubmitError ? (
+                <div className="mt-3 rounded-2xl bg-[#fff1f2] px-4 py-3 text-sm text-[#b91c1c]">
+                  {arxivSubmitError}
+                </div>
+              ) : null}
+              {isAddingArxiv ? (
+                <div className="mt-3 flex items-center gap-2 px-2 text-sm text-[#728095]">
+                  <Loader2 className="h-4 w-4 animate-spin text-[#ff9900]" />
+                  正在准备 arXiv:{detectedArxivId} 的 AI 分析
+                </div>
+              ) : null}
+            </div>
           </div>
         </div>
       </section>
@@ -91,6 +128,32 @@ export function HomePage() {
             </div>
             <Button variant="ghost" className="px-0 text-[#ff7a00] hover:bg-transparent hover:text-[#ff7a00]">
               查看 Daily Papers
+              <ArrowRight className="ml-2 h-4 w-4 transition group-hover:translate-x-1" />
+            </Button>
+          </div>
+        </button>
+      </section>
+
+      <section className="mt-10">
+        <button
+          type="button"
+          onClick={() => navigate('/arxiv')}
+          className="group relative w-full overflow-hidden rounded-[32px] bg-white p-6 text-left shadow-sm ring-1 ring-black/5 transition hover:-translate-y-1 hover:shadow-xl"
+        >
+          <div className="absolute inset-x-0 top-0 h-1.5 bg-gradient-to-r from-[#0891b2] via-[#38bdf8] to-[#0f766e]" />
+          <div className="flex flex-col gap-5 md:flex-row md:items-center md:justify-between">
+            <div>
+              <div className="mb-3 inline-flex items-center gap-2 rounded-full bg-[#ecfeff] px-3 py-1 text-sm text-[#075985]">
+                <FileText className="h-4 w-4 text-[#0891b2]" />
+                arXiv 论文
+              </div>
+              <h2 className="text-2xl font-semibold text-[#172033]">最近分析的 arXiv 论文</h2>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-[#6b7280]">
+                展示用户主动添加并完成 AI 分析的 arXiv 论文，按添加时间倒序排列，同时保留 arXiv 原始发布时间。
+              </p>
+            </div>
+            <Button variant="ghost" className="px-0 text-[#0891b2] hover:bg-transparent hover:text-[#0e7490]">
+              查看 arXiv Papers
               <ArrowRight className="ml-2 h-4 w-4 transition group-hover:translate-x-1" />
             </Button>
           </div>

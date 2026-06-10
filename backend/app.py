@@ -34,6 +34,13 @@ from github_oauth import (
     fetch_github_oauth_user,
 )
 from utils import get_or_cache_paper_content, get_openreview_info, ReaderError, OpenReviewError, truncate_content_for_llm
+from arxiv import (
+    ArxivError,
+    ArxivInvalidInputError,
+    ArxivNotFoundError,
+    arxiv_id_from_paper_id,
+    fetch_arxiv_paper,
+)
 from hf_daily import sync_hf_daily_papers
 from feishu import (
     FeishuWebhookError,
@@ -58,6 +65,7 @@ from database import (
     get_chat_messages,
     get_chat_session,
     get_chat_sessions_for_account,
+    get_arxiv_papers,
     get_conference_papers,
     get_hf_daily_papers,
     get_feishu_settings,
@@ -93,6 +101,7 @@ from database import (
     update_feishu_test_result,
     update_llm_response,
     update_llm_provider,
+    upsert_arxiv_paper,
     upsert_fetched_llm_models,
     upsert_feishu_settings,
     update_user_admin_fields,
@@ -531,6 +540,10 @@ class AnonymousMigrationRequest(BaseModel):
 class PresenceRequest(BaseModel):
     client_id: str | None = None
     user_id: str | None = None
+
+
+class ArxivPaperRequest(BaseModel):
+    input: str
 
 
 class AdminUserUpdateRequest(BaseModel):
@@ -1376,6 +1389,13 @@ def get_or_fetch_paper_info(paper_id: str) -> dict:
     if cached:
         return cached
 
+    arxiv_id = arxiv_id_from_paper_id(paper_id)
+    if arxiv_id:
+        arxiv_payload = fetch_arxiv_paper(arxiv_id)
+        return upsert_arxiv_paper(arxiv_payload["paper"], arxiv_payload["arxiv"])
+    if paper_id.startswith("arxiv:"):
+        raise ArxivInvalidInputError("请输入有效的 arXiv 链接或 ID")
+
     # Fetch from OpenReview and save basic info
     paper_info = get_openreview_info(paper_id)
     if not paper_info:
@@ -1390,6 +1410,12 @@ async def get_paper_info(paper_id: str):
     """获取论文基本信息"""
     try:
         paper_info = get_or_fetch_paper_info(paper_id)
+    except ArxivInvalidInputError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ArxivNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ArxivError as e:
+        raise HTTPException(status_code=502, detail=str(e))
     except OpenReviewError as e:
         raise HTTPException(status_code=502, detail=str(e))
     except DatabaseError as e:
@@ -1399,6 +1425,35 @@ async def get_paper_info(paper_id: str):
         raise HTTPException(status_code=404, detail="Paper not found")
 
     return paper_info
+
+
+@app.post("/arxiv-papers")
+async def create_arxiv_paper(req: ArxivPaperRequest, request: Request):
+    try:
+        user = get_current_user_optional(request)
+    except DatabaseError as e:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
+
+    added_by_user_id = user["id"] if user else None
+
+    try:
+        arxiv_payload = await asyncio.to_thread(fetch_arxiv_paper, req.input)
+        paper = await asyncio.to_thread(
+            upsert_arxiv_paper,
+            arxiv_payload["paper"],
+            arxiv_payload["arxiv"],
+            added_by_user_id,
+        )
+    except ArxivInvalidInputError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ArxivNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ArxivError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except DatabaseError as e:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
+
+    return {"paper": paper}
 
 
 @app.get("/paper/{paper_id}")
@@ -1412,6 +1467,15 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
         yield {"event": "status", "data": "正在获取论文信息..."}
         try:
             paper_info = await asyncio.to_thread(get_or_fetch_paper_info, paper_id)
+        except ArxivInvalidInputError as e:
+            yield {"event": "error", "data": str(e)}
+            return
+        except ArxivNotFoundError as e:
+            yield {"event": "error", "data": str(e)}
+            return
+        except ArxivError as e:
+            yield {"event": "error", "data": str(e)}
+            return
         except OpenReviewError as e:
             yield {"event": "error", "data": str(e)}
             return
@@ -1474,6 +1538,12 @@ async def chat_with_paper(
     if not session:
         try:
             paper_info = await asyncio.to_thread(get_or_fetch_paper_info, paper_id)
+        except ArxivInvalidInputError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except ArxivNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except ArxivError as e:
+            raise HTTPException(status_code=502, detail=str(e))
         except OpenReviewError as e:
             raise HTTPException(status_code=502, detail=str(e))
         except DatabaseError as e:
@@ -1588,6 +1658,12 @@ async def regenerate_chat(
     if not session:
         try:
             paper_info = await asyncio.to_thread(get_or_fetch_paper_info, paper_id)
+        except ArxivInvalidInputError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        except ArxivNotFoundError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except ArxivError as e:
+            raise HTTPException(status_code=502, detail=str(e))
         except OpenReviewError as e:
             raise HTTPException(status_code=502, detail=str(e))
         except DatabaseError as e:
@@ -1694,6 +1770,39 @@ async def get_hf_daily_papers_endpoint(
     }
 
 
+@app.get("/arxiv-papers")
+async def get_arxiv_papers_endpoint(
+    page: int = 1,
+    limit: int = 6,
+    search: str = "",
+    search_title: bool = True,
+    search_abstract: bool = True,
+    search_keywords: bool = True,
+):
+    safe_page = max(page, 1)
+    safe_limit = min(max(limit, 1), 24)
+    offset = (safe_page - 1) * safe_limit
+    try:
+        papers, total = get_arxiv_papers(
+            offset,
+            safe_limit,
+            analyzed_only=True,
+            search=search if search else None,
+            search_title=search_title,
+            search_abstract=search_abstract,
+            search_keywords=search_keywords,
+        )
+    except DatabaseError as e:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
+
+    return {
+        "papers": papers,
+        "total": total,
+        "page": safe_page,
+        "pages": math.ceil(total / safe_limit) if total > 0 else 1
+    }
+
+
 @app.get("/search/papers")
 async def search_all_papers_endpoint(
     page: int = 1,
@@ -1772,6 +1881,11 @@ async def serve_me_frontend():
 
 @app.get("/hf-daily")
 async def serve_hf_daily_frontend():
+    return FileResponse(get_frontend_index())
+
+
+@app.get("/arxiv")
+async def serve_arxiv_frontend():
     return FileResponse(get_frontend_index())
 
 
