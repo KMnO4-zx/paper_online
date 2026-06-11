@@ -50,6 +50,8 @@ uv run python scripts/build_chi_2026_jsonl.py
 uv run python scripts/import_papers.py --conference chi_2026
 ```
 
+CHI 2026 的生成脚本默认只保留 OpenAlex 提供的非 ACM PDF 论文，避免把服务器无法读取的 ACM DL PDF 链接导入线上库。维护者如需全量元数据，可显式加 `--include-acm-only`。
+
 ## 维护者：从 Supabase 导出现有数据
 
 需要先安装 PostgreSQL 客户端工具（`pg_dump` 主版本应尽量与 Supabase 数据库一致，例如服务端是 PostgreSQL 17 时使用 `pg_dump` 17），并配置 **Session pooler** 连接串：

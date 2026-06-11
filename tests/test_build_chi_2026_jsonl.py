@@ -53,3 +53,23 @@ def test_openalex_abstract_and_jsonl_record_shape():
     assert record["content"]["keywords"]["value"] == ["Dashboard", "AI & Data Visualization"]
     assert record["content"]["venue"]["value"] == "CHI 2026"
     assert record["content"]["pdf"]["value"] == "https://arxiv.org/pdf/2510.12386"
+
+
+def test_acm_only_pdf_is_filtered_by_default():
+    openalex_item = {
+        "locations": [{"pdf_url": "https://dl.acm.org/doi/pdf/10.1145/3772318.3791766"}],
+    }
+    paper = chi.parse_dblp_chi_2026(DBLP_SAMPLE)[0]
+
+    assert chi.build_jsonl_record(paper, openalex_item) is None
+
+
+def test_acm_only_pdf_can_be_included_explicitly():
+    openalex_item = {
+        "locations": [{"pdf_url": "https://dl.acm.org/doi/pdf/10.1145/3772318.3791766"}],
+    }
+    paper = chi.parse_dblp_chi_2026(DBLP_SAMPLE)[0]
+
+    record = chi.build_jsonl_record(paper, openalex_item, include_acm_only=True)
+
+    assert record["content"]["pdf"]["value"] == "https://dl.acm.org/doi/pdf/10.1145/3772318.3791766"

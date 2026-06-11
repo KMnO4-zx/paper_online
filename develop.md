@@ -188,6 +188,7 @@ uv run python scripts/import_papers.py --conference chi_2026
 
 - 数据源目录固定为 `crawled_data/{conference}/`
 - CHI 2026 的元数据源是 DBLP + OpenAlex，先用 `scripts/build_chi_2026_jsonl.py` 生成 `crawled_data/chi_2026/main_papers.jsonl`
+- CHI 2026 默认只保留 OpenAlex 提供的非 ACM PDF 论文；ACM DL PDF 在服务器侧常被访问验证拦截，只有维护者明确需要全量元数据时才使用 `--include-acm-only`
 - 导入是按论文覆盖式刷新
 - `papers` 会 upsert
 - 对应论文的 `authors` / `keywords` 会先删后插

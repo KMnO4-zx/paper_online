@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Build import-ready CHI 2026 JSONL from DBLP and OpenAlex metadata."""
+"""Build import-ready CHI 2026 JSONL from DBLP and OpenAlex metadata.
+
+By default this keeps only CHI papers with a non-ACM PDF URL discovered via
+OpenAlex. ACM DL PDF links are intentionally excluded because server-side
+fetching commonly hits bot verification pages instead of the actual paper.
+"""
 
 from __future__ import annotations
 
@@ -252,28 +257,36 @@ def keywords_from_openalex(item: dict[str, Any], primary_area: str) -> list[str]
     return _dedupe_preserving_order(values)[:10]
 
 
-def choose_pdf_url(doi: str, item: dict[str, Any]) -> str:
-    acm_pdf_url = ACM_PDF_URL_TEMPLATE.format(doi=doi)
+def choose_pdf_url(doi: str, item: dict[str, Any], *, include_acm_only: bool = False) -> str:
     for location in item.get("locations") or []:
         if not isinstance(location, dict):
             continue
         pdf_url = _clean_text(location.get("pdf_url"))
-        if pdf_url and "dl.acm.org" not in pdf_url.lower():
+        if pdf_url and not is_acm_pdf_url(pdf_url):
             return pdf_url
-    for location in item.get("locations") or []:
-        if not isinstance(location, dict):
-            continue
-        pdf_url = _clean_text(location.get("pdf_url"))
-        if pdf_url:
-            return pdf_url
-    return acm_pdf_url
+
+    if include_acm_only:
+        return ACM_PDF_URL_TEMPLATE.format(doi=doi)
+    return ""
 
 
-def build_jsonl_record(paper: DblpPaper, openalex_item: dict[str, Any]) -> dict[str, Any]:
+def is_acm_pdf_url(url: str) -> bool:
+    parsed = urlparse(url)
+    return parsed.netloc.casefold().endswith("dl.acm.org")
+
+
+def build_jsonl_record(
+    paper: DblpPaper,
+    openalex_item: dict[str, Any],
+    *,
+    include_acm_only: bool = False,
+) -> dict[str, Any] | None:
     title = _clean_text(openalex_item.get("title")) or paper.title
     abstract = abstract_from_openalex(openalex_item)
     keywords = keywords_from_openalex(openalex_item, paper.primary_area)
-    pdf_url = choose_pdf_url(paper.doi, openalex_item)
+    pdf_url = choose_pdf_url(paper.doi, openalex_item, include_acm_only=include_acm_only)
+    if not pdf_url:
+        return None
     acm_url = ACM_DOI_URL_TEMPLATE.format(doi=paper.doi)
 
     return {
@@ -326,6 +339,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--batch-size", type=int, default=50, help="OpenAlex DOI batch size")
     parser.add_argument("--mailto", help="Optional email for OpenAlex polite pool")
     parser.add_argument("--skip-openalex", action="store_true", help="Use DBLP only; abstracts will be empty")
+    parser.add_argument(
+        "--include-acm-only",
+        action="store_true",
+        help="Also include CHI papers without a non-ACM PDF by falling back to ACM DL PDF links",
+    )
     return parser
 
 
@@ -347,7 +365,12 @@ def main(argv: list[str] | None = None) -> int:
             mailto=args.mailto,
         )
 
-    records = [build_jsonl_record(paper, cache.get(paper.doi, {})) for paper in papers]
+    records = [
+        record
+        for paper in papers
+        if (record := build_jsonl_record(paper, cache.get(paper.doi, {}), include_acm_only=args.include_acm_only))
+        is not None
+    ]
     write_jsonl(args.output, records)
 
     with_abstract = sum(1 for record in records if record["content"]["abstract"]["value"])
@@ -357,6 +380,7 @@ def main(argv: list[str] | None = None) -> int:
         if "dl.acm.org" not in (record["content"]["pdf"]["value"] or "").lower()
     )
     print(f"Wrote {len(records)} CHI 2026 papers to {args.output}")
+    print(f"Skipped ACM-only papers: {len(papers) - len(records)}")
     print(f"OpenAlex abstracts: {with_abstract}/{len(records)}")
     print(f"Non-ACM PDF fallbacks: {with_non_acm_pdf}/{len(records)}")
     return 0
