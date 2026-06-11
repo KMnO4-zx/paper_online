@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS papers (
   pdf TEXT,
   venue TEXT,
   primary_area TEXT,
+  sort_order INTEGER,
   llm_response TEXT,
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
@@ -15,6 +16,7 @@ ALTER TABLE papers
   ADD COLUMN IF NOT EXISTS pdf TEXT,
   ADD COLUMN IF NOT EXISTS venue TEXT,
   ADD COLUMN IF NOT EXISTS primary_area TEXT,
+  ADD COLUMN IF NOT EXISTS sort_order INTEGER,
   ADD COLUMN IF NOT EXISTS llm_response TEXT,
   ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ DEFAULT NOW();
 

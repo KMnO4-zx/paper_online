@@ -98,6 +98,7 @@ def _parse_line(line: str) -> tuple[tuple, list[tuple], list[tuple]]:
         _normalize_pdf_url(paper_id, content.get("pdf", {}).get("value")),
         content["venue"]["value"],
         content["primary_area"]["value"],
+        _optional_int(content.get("sort_order", {}).get("value")),
     )
 
     author_rows = [
@@ -112,6 +113,12 @@ def _parse_line(line: str) -> tuple[tuple, list[tuple], list[tuple]]:
     return paper_row, author_rows, keyword_rows
 
 
+def _optional_int(value):
+    if value is None or value == "":
+        return None
+    return int(value)
+
+
 def _insert_batch(
     papers: list[tuple],
     authors: list[tuple],
@@ -124,15 +131,16 @@ def _insert_batch(
         with conn.cursor() as cur:
             cur.executemany(
                 """
-                INSERT INTO papers (id, title, abstract, keywords, pdf, venue, primary_area)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
+                INSERT INTO papers (id, title, abstract, keywords, pdf, venue, primary_area, sort_order)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                 ON CONFLICT (id) DO UPDATE SET
                     title = EXCLUDED.title,
                     abstract = EXCLUDED.abstract,
                     keywords = EXCLUDED.keywords,
                     pdf = EXCLUDED.pdf,
                     venue = EXCLUDED.venue,
-                    primary_area = EXCLUDED.primary_area
+                    primary_area = EXCLUDED.primary_area,
+                    sort_order = EXCLUDED.sort_order
                 """,
                 papers,
             )

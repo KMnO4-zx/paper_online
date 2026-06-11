@@ -14,6 +14,7 @@
 - `scripts/apply_migrations.py`：按顺序执行 `db/migrations/*.sql`
 - `scripts/import_papers.py`：将 `crawled_data/{conference}` 下的 JSONL 导入 PostgreSQL
 - `scripts/build_chi_2026_jsonl.py`：从 DBLP + OpenAlex 生成 CHI 2026 的导入 JSONL
+- `scripts/build_cvpr_2026_jsonl.py`：从 CVF Open Access 生成 CVPR 2026 的导入 JSONL
 - `scripts/export_supabase.sh`：使用 `pg_dump` 导出 Supabase schema 和 data
 - `scripts/restore_supabase_dump.sh`：将导出的 `supabase_data.dump` 恢复到本地 PostgreSQL
 - `scripts/migrate_db.sql`：单文件版完整 migration，方便手动执行
@@ -48,9 +49,13 @@ uv run python scripts/import_papers.py --conference iclr_2026
 uv run python scripts/import_papers.py --conference icml_2025
 uv run python scripts/build_chi_2026_jsonl.py
 uv run python scripts/import_papers.py --conference chi_2026
+uv run python scripts/build_cvpr_2026_jsonl.py
+uv run python scripts/import_papers.py --conference cvpr_2026
 ```
 
 CHI 2026 的生成脚本默认只保留 OpenAlex 提供的非 ACM PDF 论文，避免把服务器无法读取的 ACM DL PDF 链接导入线上库。维护者如需全量元数据，可显式加 `--include-acm-only`。
+
+CVPR 2026 的生成脚本使用 CVF Open Access 的 `day=all` 页面，导入时写入 `sort_order`，会议页默认按 CVF 官方列表顺序展示。
 
 ## 维护者：从 Supabase 导出现有数据
 

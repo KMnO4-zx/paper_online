@@ -11,6 +11,7 @@ export interface Paper {
   pdf?: string | null;
   llm_response?: string | null;
   created_at?: string;
+  sort_order?: number | null;
   hf_daily?: HfDailyPaperMeta | null;
   arxiv?: ArxivPaperMeta | null;
   openReviewUrl?: string;
@@ -55,7 +56,7 @@ export interface ConferenceDefinition extends Conference {
   accentClass: string;
 }
 
-export type ConferenceSlug = 'iclr_2026' | 'neurips_2025' | 'icml_2025' | 'chi_2026';
+export type ConferenceSlug = 'iclr_2026' | 'neurips_2025' | 'icml_2025' | 'chi_2026' | 'cvpr_2026';
 
 export interface ChatMessage {
   id?: string;

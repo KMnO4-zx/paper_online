@@ -1745,6 +1745,7 @@ async def get_conference_papers_endpoint(
         "iclr_2026": "ICLR 2026",
         "icml_2025": "ICML 2025",
         "chi_2026": "CHI 2026",
+        "cvpr_2026": "CVPR 2026",
     }
     venue_name = venue_map.get(venue)
     if not venue_name:

@@ -272,9 +272,10 @@ def save_paper(paper_info: dict, llm_response: str = None):
                         pdf,
                         venue,
                         primary_area,
+                        sort_order,
                         llm_response
                     )
-                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
                     ON CONFLICT (id) DO UPDATE SET
                         title = EXCLUDED.title,
                         abstract = EXCLUDED.abstract,
@@ -282,6 +283,7 @@ def save_paper(paper_info: dict, llm_response: str = None):
                         pdf = EXCLUDED.pdf,
                         venue = EXCLUDED.venue,
                         primary_area = EXCLUDED.primary_area,
+                        sort_order = EXCLUDED.sort_order,
                         llm_response = EXCLUDED.llm_response
                     """,
                     (
@@ -292,6 +294,7 @@ def save_paper(paper_info: dict, llm_response: str = None):
                         normalized_pdf,
                         paper_info.get("venue"),
                         paper_info.get("primary_area"),
+                        paper_info.get("sort_order"),
                         llm_response,
                     ),
                 )
@@ -2459,9 +2462,20 @@ def _normalized_title(paper: dict) -> str:
     return (paper.get("title") or "").casefold()
 
 
-def _stable_paper_sort_key(paper: dict) -> tuple[int, str, str]:
+def _paper_sort_order(paper: dict) -> int:
+    value = paper.get("sort_order")
+    if value is None:
+        return 2_147_483_647
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return 2_147_483_647
+
+
+def _stable_paper_sort_key(paper: dict) -> tuple[int, int, str, str]:
     return (
         _paper_type_priority(paper),
+        _paper_sort_order(paper),
         _normalized_title(paper),
         paper.get("id") or "",
     )

@@ -16,6 +16,13 @@ export const CONFERENCES: ConferenceDefinition[] = [
     accentClass: 'from-[#f26d6d] via-[#ff9f7a] to-[#ffd166]',
   },
   {
+    id: 'cvpr_2026',
+    name: 'CVPR 2026',
+    fullName: 'Conference on Computer Vision and Pattern Recognition',
+    year: 2026,
+    accentClass: 'from-[#0ea5e9] via-[#22c55e] to-[#facc15]',
+  },
+  {
     id: 'neurips_2025',
     name: 'NeurIPS 2025',
     fullName: 'Neural Information Processing Systems',
