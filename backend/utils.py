@@ -355,6 +355,8 @@ def get_openreview_info(paper_id: str) -> dict | None:
     for attempt in range(MAX_RETRIES):
         try:
             response = requests.get(url, headers=HEADERS, timeout=TIMEOUT)
+            if response.status_code == 404:
+                return None
             response.raise_for_status()
             data = response.json()
 

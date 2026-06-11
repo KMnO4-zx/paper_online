@@ -153,3 +153,19 @@ def test_reader_rejects_blocked_page(monkeypatch):
         assert "访问验证" in str(exc)
     else:
         raise AssertionError("reader should reject blocked verification pages")
+
+
+def test_get_openreview_info_returns_none_on_404(monkeypatch):
+    class FakeResponse:
+        status_code = 404
+
+    calls = []
+
+    def fake_get(url, headers=None, timeout=None):
+        calls.append(url)
+        return FakeResponse()
+
+    monkeypatch.setattr(utils.requests, "get", fake_get)
+
+    assert utils.get_openreview_info("chi2026-3772318-3791732") is None
+    assert calls == ["https://api2.openreview.net/notes?id=chi2026-3772318-3791732"]

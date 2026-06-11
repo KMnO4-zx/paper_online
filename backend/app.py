@@ -1406,6 +1406,10 @@ def get_or_fetch_paper_info(paper_id: str) -> dict:
     return paper_info
 
 
+def _openreview_error_status(error: OpenReviewError) -> int:
+    return 404 if str(error) == "Paper not found" else 502
+
+
 @app.get("/paper/{paper_id}/info")
 async def get_paper_info(paper_id: str):
     """获取论文基本信息"""
@@ -1418,7 +1422,7 @@ async def get_paper_info(paper_id: str):
     except ArxivError as e:
         raise HTTPException(status_code=502, detail=str(e))
     except OpenReviewError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+        raise HTTPException(status_code=_openreview_error_status(e), detail=str(e))
     except DatabaseError as e:
         raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
 
@@ -1552,7 +1556,7 @@ async def chat_with_paper(
         except ArxivError as e:
             raise HTTPException(status_code=502, detail=str(e))
         except OpenReviewError as e:
-            raise HTTPException(status_code=502, detail=str(e))
+            raise HTTPException(status_code=_openreview_error_status(e), detail=str(e))
         except DatabaseError as e:
             raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
 
@@ -1679,7 +1683,7 @@ async def regenerate_chat(
         except ArxivError as e:
             raise HTTPException(status_code=502, detail=str(e))
         except OpenReviewError as e:
-            raise HTTPException(status_code=502, detail=str(e))
+            raise HTTPException(status_code=_openreview_error_status(e), detail=str(e))
         except DatabaseError as e:
             raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
 
