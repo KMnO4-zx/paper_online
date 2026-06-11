@@ -21,6 +21,13 @@ MAX_RETRIES = 3
 LLM_CONTENT_TOKEN_LIMIT = 180000
 MIN_EXTRACTED_PDF_TEXT_CHARS = 200
 _TOKEN_ENCODING = tiktoken.get_encoding("cl100k_base")
+BLOCKED_READER_MARKERS = (
+    "performing security verification",
+    "this website uses a security service to protect against malicious bots",
+    "target url returned error 403: forbidden",
+    "this page maybe requiring captcha",
+    "enable javascript and cookies to continue",
+)
 
 HEADERS = {
     "Accept": "application/json,text/*;q=0.99",
@@ -30,6 +37,9 @@ HEADERS = {
 }
 PDF_HEADERS = {
     "Accept": "application/pdf,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9,zh-CN;q=0.8,zh;q=0.7",
+    "Cache-Control": "no-cache",
+    "Pragma": "no-cache",
     "User-Agent": HEADERS["User-Agent"],
 }
 
@@ -129,6 +139,10 @@ def get_cached_paper_content(paper_id: str, pdf_url: str | None = None) -> str |
         logger.warning("论文正文缓存为空，忽略缓存: %s", content_path)
         return None
 
+    if is_blocked_reader_content(content):
+        logger.warning("论文正文缓存疑似为访问验证页，忽略缓存: %s", content_path)
+        return None
+
     logger.info("论文正文缓存命中: %s", paper_id)
     return content
 
@@ -143,6 +157,10 @@ def _atomic_write_text(path: Path, content: str) -> None:
 def cache_paper_content(paper_id: str, pdf_url: str, content: str, source: str = "jina_reader") -> None:
     if not content.strip():
         logger.warning("论文正文为空，跳过缓存: %s", paper_id)
+        return
+
+    if is_blocked_reader_content(content):
+        logger.warning("论文正文疑似为访问验证页，跳过缓存: %s", paper_id)
         return
 
     normalized_pdf_url = normalize_paper_pdf_url(paper_id, pdf_url) or pdf_url
@@ -219,9 +237,12 @@ def reader(url: str) -> str:
 
     for attempt in range(MAX_RETRIES):
         try:
-            response = requests.get(target_url, timeout=TIMEOUT)
+            response = requests.get(target_url, headers=_reader_request_headers(url), timeout=TIMEOUT)
             response.raise_for_status()
-            return response.text
+            content = response.text
+            if is_blocked_reader_content(content):
+                raise ReaderError(f"目标页面被访问验证或反爬拦截，未获取到论文正文: {url}")
+            return content
         except requests.Timeout:
             last_error = "请求超时"
             logger.warning(f"Jina Reader 超时 (尝试 {attempt + 1}/{MAX_RETRIES})")
@@ -236,6 +257,37 @@ def reader(url: str) -> str:
     raise ReaderError(f"Jina Reader 请求失败，已重试 {MAX_RETRIES} 次: {url}{detail}")
 
 
+def is_blocked_reader_content(content: str) -> bool:
+    normalized = " ".join(content.casefold().split())
+    return any(marker in normalized for marker in BLOCKED_READER_MARKERS)
+
+
+def _reader_request_headers(url: str) -> dict[str, str]:
+    headers = {
+        "Accept": "text/markdown,text/plain,text/*;q=0.9,*/*;q=0.8",
+        "Accept-Language": PDF_HEADERS["Accept-Language"],
+        "User-Agent": HEADERS["User-Agent"],
+    }
+    parsed = urlparse(url)
+    if parsed.netloc:
+        headers["X-Target-URL"] = url
+    return headers
+
+
+def _pdf_request_headers(url: str) -> dict[str, str]:
+    headers = dict(PDF_HEADERS)
+    parsed = urlparse(url)
+    host = parsed.netloc.casefold()
+    if host.endswith("dl.acm.org"):
+        headers["Referer"] = "https://dl.acm.org/"
+    elif host.endswith("openreview.net"):
+        headers["Referer"] = "https://openreview.net/"
+        headers["Origin"] = "https://openreview.net"
+    elif parsed.scheme and parsed.netloc:
+        headers["Referer"] = f"{parsed.scheme}://{parsed.netloc}/"
+    return headers
+
+
 def _looks_like_pdf_url(url: str) -> bool:
     parsed = urlparse(url)
     path = parsed.path.lower().rstrip("/")
@@ -247,7 +299,7 @@ def extract_pdf_text_from_url(url: str) -> str:
 
     for attempt in range(MAX_RETRIES):
         try:
-            response = requests.get(url, headers=PDF_HEADERS, timeout=TIMEOUT)
+            response = requests.get(url, headers=_pdf_request_headers(url), timeout=TIMEOUT)
             response.raise_for_status()
             content_type = response.headers.get("content-type", "")
             if "pdf" not in content_type.lower() and not response.content.startswith(b"%PDF"):

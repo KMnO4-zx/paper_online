@@ -27,6 +27,7 @@ from auth import (
 from config import settings
 from llm import ManagedLLM, fetch_openai_compatible_model_names
 from migrations import apply_migrations
+from analysis_context import build_analysis_prompt, build_chat_context_parts
 from github_oauth import (
     GITHUB_AUTHORIZE_URL,
     GithubOAuthError,
@@ -1494,20 +1495,26 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
 
         # Perform AI analysis
         yield {"event": "status", "data": "正在读取 PDF 内容..."}
-        try:
-            paper_content = await asyncio.to_thread(
-                get_or_cache_paper_content,
-                paper_id,
-                paper_info["pdf"],
-            )
-            paper_content = truncate_content_for_llm(paper_content)
-        except ReaderError as e:
-            yield {"event": "error", "data": str(e)}
-            return
+        paper_content = None
+        content_error = None
+        if paper_info.get("pdf"):
+            try:
+                paper_content = await asyncio.to_thread(
+                    get_or_cache_paper_content,
+                    paper_id,
+                    paper_info["pdf"],
+                )
+                paper_content = truncate_content_for_llm(paper_content)
+            except ReaderError as e:
+                content_error = str(e)
+                yield {"event": "status", "data": "PDF 正文读取失败，正在基于论文元数据分析..."}
+        else:
+            content_error = "论文没有可用 PDF 链接"
+            yield {"event": "status", "data": "未找到 PDF 链接，正在基于论文元数据分析..."}
 
         yield {"event": "status", "data": "正在分析论文..."}
 
-        user_prompt = f"以下是论文内容：\n{paper_content}"
+        user_prompt = build_analysis_prompt(paper_info, paper_content, content_error)
 
         full_response = []
         async for stream_chunk in llm.get_response_stream_events(user_prompt):
@@ -1550,14 +1557,21 @@ async def chat_with_paper(
             raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
 
         context_parts = []
+        paper_content = None
+        content_error = None
         if paper_info.get("pdf"):
-            paper_content = await asyncio.to_thread(
-                get_or_cache_paper_content,
-                paper_id,
-                paper_info["pdf"],
-            )
-            paper_content = truncate_content_for_llm(paper_content)
-            context_parts.append(f"论文全文：\n{paper_content}")
+            try:
+                paper_content = await asyncio.to_thread(
+                    get_or_cache_paper_content,
+                    paper_id,
+                    paper_info["pdf"],
+                )
+                paper_content = truncate_content_for_llm(paper_content)
+            except ReaderError as e:
+                content_error = str(e)
+        else:
+            content_error = "论文没有可用 PDF 链接"
+        context_parts.extend(build_chat_context_parts(paper_info, paper_content, content_error))
         if paper_info.get("llm_response"):
             context_parts.append(f"论文分析：\n{paper_info['llm_response']}")
 
@@ -1670,14 +1684,21 @@ async def regenerate_chat(
             raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
 
         context_parts = []
+        paper_content = None
+        content_error = None
         if paper_info.get("pdf"):
-            paper_content = await asyncio.to_thread(
-                get_or_cache_paper_content,
-                paper_id,
-                paper_info["pdf"],
-            )
-            paper_content = truncate_content_for_llm(paper_content)
-            context_parts.append(f"论文全文：\n{paper_content}")
+            try:
+                paper_content = await asyncio.to_thread(
+                    get_or_cache_paper_content,
+                    paper_id,
+                    paper_info["pdf"],
+                )
+                paper_content = truncate_content_for_llm(paper_content)
+            except ReaderError as e:
+                content_error = str(e)
+        else:
+            content_error = "论文没有可用 PDF 链接"
+        context_parts.extend(build_chat_context_parts(paper_info, paper_content, content_error))
         if paper_info.get("llm_response"):
             context_parts.append(f"论文分析：\n{paper_info['llm_response']}")
         history_rows = get_chat_messages(req.session_id)

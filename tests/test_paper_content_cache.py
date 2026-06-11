@@ -95,3 +95,61 @@ def test_get_or_cache_paper_content_falls_back_to_pdf_text_extractor(tmp_path, m
     assert len(meta_files) == 1
     metadata = json.loads(meta_files[0].read_text(encoding="utf-8"))
     assert metadata["source"] == "pdf_text_extractor"
+
+
+def test_cache_ignores_blocked_reader_content(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        utils,
+        "settings",
+        SimpleNamespace(paths=SimpleNamespace(paper_content_cache_dir=str(tmp_path))),
+    )
+
+    blocked_content = """Title: Just a moment...
+
+    Warning: Target URL returned error 403: Forbidden
+
+    ## Performing security verification
+    This website uses a security service to protect against malicious bots.
+    """
+
+    utils.cache_paper_content("chi2026-3772318-3791732", "https://dl.acm.org/doi/pdf/10.1145/3772318.3791732", blocked_content)
+
+    assert list(tmp_path.glob("*.txt")) == []
+    assert list(tmp_path.glob("*.meta.json")) == []
+
+
+def test_get_cached_paper_content_ignores_existing_blocked_cache(tmp_path, monkeypatch):
+    monkeypatch.setattr(
+        utils,
+        "settings",
+        SimpleNamespace(paths=SimpleNamespace(paper_content_cache_dir=str(tmp_path))),
+    )
+
+    paper_id = "chi2026-3772318-3791732"
+    pdf_url = "https://dl.acm.org/doi/pdf/10.1145/3772318.3791732"
+    content_path, meta_path = utils._get_paper_cache_paths(paper_id)
+    content_path.parent.mkdir(parents=True, exist_ok=True)
+    content_path.write_text("## Performing security verification\nThis website uses a security service to protect against malicious bots.", encoding="utf-8")
+    meta_path.write_text(json.dumps({"paper_id": paper_id, "pdf_url": pdf_url}), encoding="utf-8")
+
+    assert utils.get_cached_paper_content(paper_id, pdf_url) is None
+
+
+def test_reader_rejects_blocked_page(monkeypatch):
+    class FakeResponse:
+        text = "Title: Just a moment...\n## Performing security verification"
+
+        def raise_for_status(self):
+            return None
+
+    def fake_get(url, headers=None, timeout=None):
+        return FakeResponse()
+
+    monkeypatch.setattr(utils.requests, "get", fake_get)
+
+    try:
+        utils.reader("https://dl.acm.org/doi/pdf/10.1145/3772318.3791732")
+    except utils.ReaderError as exc:
+        assert "访问验证" in str(exc)
+    else:
+        raise AssertionError("reader should reject blocked verification pages")
