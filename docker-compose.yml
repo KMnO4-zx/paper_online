@@ -27,7 +27,7 @@ services:
       - "${PORT:-8000}:8000"
     volumes:
       - app_data:/app/data
-      - ./config.yaml:/app/config.yaml:ro
+      - ./config.yaml:/app/config.yaml
 
 volumes:
   postgres_data:

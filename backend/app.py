@@ -24,7 +24,7 @@ from auth import (
     password_needs_rehash,
     verify_password,
 )
-from config import settings
+from config import settings, write_background_analysis_config
 from llm import ManagedLLM, fetch_openai_compatible_model_names
 from migrations import apply_migrations
 from analysis_context import build_analysis_prompt, build_chat_context_parts
@@ -54,6 +54,7 @@ from feishu import (
 from database import (
     DatabaseError,
     count_active_admins,
+    count_unanalyzed_papers,
     create_chat_session,
     create_or_link_github_user,
     create_user_session,
@@ -126,6 +127,8 @@ presence_snapshot_task = None
 hf_daily_task = None
 feishu_push_task = None
 hf_daily_analysis_tasks: set[asyncio.Task] = set()
+background_analysis_enabled = settings.background_analysis.enabled
+background_analysis_lock = asyncio.Lock()
 
 
 async def run_presence_snapshots():
@@ -211,6 +214,149 @@ def schedule_hf_daily_analysis(paper_ids: list[str]) -> None:
             logger.warning("HF Daily 自动分析任务失败: %s", exc)
 
     task.add_done_callback(finalize)
+
+
+def task_runtime_status(task: asyncio.Task | None, enabled: bool = True) -> str:
+    if not enabled:
+        return "disabled"
+    if task is None:
+        return "stopped"
+    if not task.done():
+        return "running"
+    if task.cancelled():
+        return "stopped"
+    try:
+        exception = task.exception()
+    except asyncio.CancelledError:
+        return "stopped"
+    return "failed" if exception else "stopped"
+
+
+def paper_analysis_status() -> str:
+    return task_runtime_status(background_task, background_analysis_enabled)
+
+
+async def stop_background_analysis_task() -> None:
+    global background_task
+    background_analyzer.stop()
+    if not background_task:
+        return
+    background_task.cancel()
+    try:
+        await background_task
+    except asyncio.CancelledError:
+        pass
+    background_task = None
+
+
+def start_background_analysis_task() -> None:
+    global background_task
+    if background_task and not background_task.done():
+        return
+    background_task = asyncio.create_task(background_analyzer.run())
+    logger.info("后台分析任务已启动")
+
+
+async def apply_background_analysis_runtime_config(
+    *,
+    enabled: bool,
+    check_interval_seconds: int,
+) -> None:
+    global background_analysis_enabled
+    async with background_analysis_lock:
+        await asyncio.to_thread(
+            write_background_analysis_config,
+            enabled,
+            check_interval_seconds,
+        )
+
+        background_analysis_enabled = enabled
+        background_analyzer.set_check_interval(check_interval_seconds)
+        if enabled:
+            start_background_analysis_task()
+        else:
+            await stop_background_analysis_task()
+
+
+async def build_background_tasks_payload() -> dict:
+    try:
+        unanalyzed_count = await asyncio.to_thread(count_unanalyzed_papers)
+    except DatabaseError:
+        raise
+
+    analyzer_state = background_analyzer.status_snapshot()
+    return {
+        "generated_at": datetime.now(timezone.utc),
+        "llm_configured": llm.is_configured(),
+        "tasks": [
+            {
+                "id": "paper_analysis",
+                "name": "论文后台分析",
+                "owner": "admin",
+                "status": paper_analysis_status(),
+                "enabled": background_analysis_enabled,
+                "manageable": True,
+                "description": "定期扫描未分析论文并写入 LLM 分析结果",
+                "metadata": {
+                    **analyzer_state,
+                    "unanalyzed_count": unanalyzed_count,
+                },
+            },
+            {
+                "id": "presence_snapshots",
+                "name": "在线人数快照",
+                "owner": "system",
+                "status": task_runtime_status(presence_snapshot_task),
+                "enabled": True,
+                "manageable": False,
+                "description": "按固定间隔汇总在线人数趋势",
+                "metadata": {
+                    "interval_seconds": settings.presence.snapshot_interval_seconds,
+                    "retention_days": settings.presence.retention_days,
+                },
+            },
+            {
+                "id": "hf_daily_sync",
+                "name": "HF Daily 抓取",
+                "owner": "system",
+                "status": task_runtime_status(hf_daily_task, settings.hf_daily.enabled),
+                "enabled": settings.hf_daily.enabled,
+                "manageable": False,
+                "description": "定时同步 Hugging Face Daily Papers",
+                "metadata": {
+                    "fetch_time": settings.hf_daily.fetch_time,
+                    "timezone": settings.hf_daily.timezone,
+                    "top_n": settings.hf_daily.top_n,
+                },
+            },
+            {
+                "id": "hf_daily_auto_analysis",
+                "name": "HF Daily 自动分析",
+                "owner": "system",
+                "status": "running" if hf_daily_analysis_tasks else "idle",
+                "enabled": settings.hf_daily.enabled,
+                "manageable": False,
+                "description": "HF Daily 入库后自动补齐论文分析",
+                "metadata": {
+                    "active_jobs": len(hf_daily_analysis_tasks),
+                },
+            },
+            {
+                "id": "feishu_daily_push",
+                "name": "飞书每日推送",
+                "owner": "system",
+                "status": task_runtime_status(feishu_push_task, settings.feishu_notifications.enabled),
+                "enabled": settings.feishu_notifications.enabled,
+                "manageable": False,
+                "description": "为启用用户发送每日论文卡片",
+                "metadata": {
+                    "push_time": settings.feishu_notifications.push_time,
+                    "timezone": settings.hf_daily.timezone,
+                    "max_daily_push_count": settings.feishu_notifications.max_daily_push_count,
+                },
+            },
+        ],
+    }
 
 
 async def sync_hf_daily_once() -> dict:
@@ -471,9 +617,8 @@ async def lifespan(app: FastAPI):
     except DatabaseError as exc:
         logger.warning("LLM 供应商初始化失败: %s", exc)
 
-    if settings.background_analysis.enabled:
-        background_task = asyncio.create_task(background_analyzer.run())
-        logger.info("后台分析任务已启动")
+    if background_analysis_enabled:
+        start_background_analysis_task()
     else:
         logger.info("后台分析任务未启用")
 
@@ -550,6 +695,11 @@ class ArxivPaperRequest(BaseModel):
 class AdminUserUpdateRequest(BaseModel):
     role: str | None = None
     is_active: bool | None = None
+
+
+class AdminBackgroundAnalysisUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    check_interval_seconds: int | None = None
 
 
 class ResetPasswordRequest(BaseModel):
@@ -1153,6 +1303,43 @@ async def admin_llm_token_usage_metrics(admin: dict = Depends(require_admin_user
         return get_llm_token_usage_metrics()
     except DatabaseError as exc:
         raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+
+
+@app.get("/admin/background-tasks")
+async def admin_background_tasks(admin: dict = Depends(require_admin_user)):
+    try:
+        return await build_background_tasks_payload()
+    except DatabaseError as exc:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+
+
+@app.patch("/admin/background-tasks/paper-analysis")
+async def admin_update_paper_analysis_task(
+    req: AdminBackgroundAnalysisUpdateRequest,
+    admin: dict = Depends(require_admin_user),
+):
+    enabled = background_analysis_enabled if req.enabled is None else req.enabled
+    check_interval_seconds = (
+        background_analyzer.check_interval
+        if req.check_interval_seconds is None
+        else req.check_interval_seconds
+    )
+    if check_interval_seconds < 60:
+        raise HTTPException(status_code=400, detail="check_interval_seconds must be at least 60")
+    if check_interval_seconds > 60 * 60 * 24 * 30:
+        raise HTTPException(status_code=400, detail="check_interval_seconds must be at most 2592000")
+
+    try:
+        await apply_background_analysis_runtime_config(
+            enabled=enabled,
+            check_interval_seconds=check_interval_seconds,
+        )
+        return await build_background_tasks_payload()
+    except DatabaseError as exc:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from exc
+    except OSError as exc:
+        logger.warning("后台分析配置写入失败: %s", exc)
+        raise HTTPException(status_code=500, detail="Failed to update config.yaml") from exc
 
 
 @app.post("/admin/hf-daily-papers/sync")

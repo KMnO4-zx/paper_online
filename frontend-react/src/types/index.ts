@@ -229,6 +229,27 @@ export interface AdminLlmTokenUsageMetrics {
   monthly: LlmTokenUsageWindow;
 }
 
+export type AdminBackgroundTaskOwner = 'admin' | 'system';
+
+export type AdminBackgroundTaskStatus = 'disabled' | 'stopped' | 'running' | 'failed' | 'idle';
+
+export interface AdminBackgroundTask {
+  id: string;
+  name: string;
+  owner: AdminBackgroundTaskOwner;
+  status: AdminBackgroundTaskStatus | string;
+  enabled: boolean;
+  manageable: boolean;
+  description: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface AdminBackgroundTasksResponse {
+  generated_at: string;
+  llm_configured: boolean;
+  tasks: AdminBackgroundTask[];
+}
+
 export interface HfDailySyncResponse {
   daily_date: string;
   selected: number;

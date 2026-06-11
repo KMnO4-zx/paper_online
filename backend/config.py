@@ -297,3 +297,57 @@ def load_app_config() -> AppConfig:
 
 
 settings = load_app_config()
+
+
+def write_background_analysis_config(enabled: bool, check_interval_seconds: int) -> None:
+    section_lines = [
+        "background_analysis:",
+        "  # Disabled by default to avoid calling LLM APIs immediately on startup.",
+        f"  enabled: {str(enabled).lower()}",
+        f"  check_interval_seconds: {check_interval_seconds}",
+    ]
+
+    if not CONFIG_PATH.exists():
+        CONFIG_PATH.write_text("\n".join(section_lines) + "\n", encoding="utf-8")
+        return
+
+    lines = CONFIG_PATH.read_text(encoding="utf-8").splitlines()
+    start_index = next(
+        (
+            index
+            for index, line in enumerate(lines)
+            if line.strip() == "background_analysis:" and line == line.lstrip()
+        ),
+        None,
+    )
+
+    if start_index is not None:
+        end_index = start_index + 1
+        while end_index < len(lines):
+            line = lines[end_index]
+            is_next_section = line and line == line.lstrip() and not line.startswith("#")
+            if is_next_section:
+                break
+            end_index += 1
+
+        replacement = section_lines.copy()
+        if end_index < len(lines) and lines[end_index].strip():
+            replacement.append("")
+        lines[start_index:end_index] = replacement
+    else:
+        insert_index = next(
+            (
+                index
+                for index, line in enumerate(lines)
+                if line.strip() == "hf_daily:" and line == line.lstrip()
+            ),
+            len(lines),
+        )
+        insertion = section_lines.copy()
+        if insert_index > 0 and lines[insert_index - 1].strip():
+            insertion.insert(0, "")
+        if insert_index < len(lines) and lines[insert_index].strip():
+            insertion.append("")
+        lines[insert_index:insert_index] = insertion
+
+    CONFIG_PATH.write_text("\n".join(lines).rstrip() + "\n", encoding="utf-8")

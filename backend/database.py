@@ -3021,6 +3021,27 @@ def get_unanalyzed_papers(limit: int = 10) -> list:
     return _run_with_retry(operation, f"get_unanalyzed_papers:{limit}")
 
 
+def count_unanalyzed_papers() -> int:
+    """Count papers that have not been analyzed by an LLM yet."""
+    if not DATABASE_URL:
+        return 0
+
+    def operation() -> int:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM papers
+                    WHERE llm_response IS NULL
+                    """
+                )
+                row = cur.fetchone()
+                return int(row["total"] or 0)
+
+    return _run_with_retry(operation, "count_unanalyzed_papers")
+
+
 def record_presence(
     client_id: str,
     user_id: str | None,

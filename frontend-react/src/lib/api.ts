@@ -1,5 +1,6 @@
 import type {
   ActiveLlmModel,
+  AdminBackgroundTasksResponse,
   AdminLlmFetchModelsResponse,
   AdminLlmProvider,
   AdminLlmProviderListResponse,
@@ -290,6 +291,20 @@ export async function fetchAdminOnlineMetrics(range: '24h' | '7d'): Promise<Admi
 
 export async function fetchAdminLlmTokenUsageMetrics(): Promise<AdminLlmTokenUsageMetrics> {
   return apiFetch<AdminLlmTokenUsageMetrics>('/admin/metrics/llm-token-usage');
+}
+
+export async function fetchAdminBackgroundTasks(): Promise<AdminBackgroundTasksResponse> {
+  return apiFetch<AdminBackgroundTasksResponse>('/admin/background-tasks');
+}
+
+export async function updateAdminPaperAnalysisTask(payload: {
+  enabled?: boolean;
+  check_interval_seconds?: number;
+}): Promise<AdminBackgroundTasksResponse> {
+  return apiFetch<AdminBackgroundTasksResponse>('/admin/background-tasks/paper-analysis', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
 }
 
 export async function syncAdminHfDailyPapers(): Promise<HfDailySyncResponse> {

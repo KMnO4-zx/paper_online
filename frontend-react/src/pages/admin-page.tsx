@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   Brain,
+  Clock3,
   KeyRound,
+  ListChecks,
   Loader2,
   Plus,
   RefreshCcw,
@@ -41,6 +43,7 @@ import {
   addAdminLlmModel,
   createAdminLlmProvider,
   deleteAdminUser,
+  fetchAdminBackgroundTasks,
   fetchAdminLlmTokenUsageMetrics,
   fetchAdminLlmModels,
   fetchAdminLlmProviders,
@@ -50,12 +53,15 @@ import {
   setAdminActiveLlm,
   syncAdminHfDailyPapers,
   testAdminActiveLlm,
+  updateAdminPaperAnalysisTask,
   updateAdminLlmProvider,
   updateAdminUser,
 } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { navigate } from '@/lib/router';
 import type {
+  AdminBackgroundTask,
+  AdminBackgroundTasksResponse,
   AdminLlmProvider,
   AdminLlmTokenUsageMetrics,
   AdminOnlineMetrics,
@@ -83,6 +89,7 @@ function formatTrendTick(value: string, range: '24h' | '7d') {
 }
 
 const tokenFormatter = new Intl.NumberFormat('en-US');
+const TOKEN_DETAIL_PAGE_SIZE = 7;
 
 function formatTokenCount(value: number | null | undefined) {
   return tokenFormatter.format(value ?? 0);
@@ -96,6 +103,54 @@ function tokenYAxisWidth(items: LlmTokenUsageDailyTotal[]) {
   const maxValue = Math.max(0, ...items.map((item) => Math.max(item.total_tokens, tokenDailyStackTotal(item))));
   const labelLength = formatTokenCount(maxValue).length;
   return Math.min(Math.max(labelLength * 8 + 26, 56), 112);
+}
+
+function formatDuration(seconds: number | null | undefined) {
+  const safeSeconds = Math.max(0, Number(seconds ?? 0));
+  if (safeSeconds >= 86400 && safeSeconds % 86400 === 0) {
+    return `${safeSeconds / 86400} 天`;
+  }
+  if (safeSeconds >= 3600 && safeSeconds % 3600 === 0) {
+    return `${safeSeconds / 3600} 小时`;
+  }
+  if (safeSeconds >= 60 && safeSeconds % 60 === 0) {
+    return `${safeSeconds / 60} 分钟`;
+  }
+  return `${safeSeconds} 秒`;
+}
+
+function taskStatusLabel(status: string) {
+  const labels: Record<string, string> = {
+    disabled: '未启用',
+    stopped: '已停止',
+    running: '运行中',
+    failed: '异常',
+    idle: '空闲',
+  };
+  return labels[status] ?? status;
+}
+
+function taskStatusClass(status: string) {
+  if (status === 'running') {
+    return 'border-[#bbf7d0] bg-[#ecfdf5] text-[#047857]';
+  }
+  if (status === 'failed') {
+    return 'border-[#fecdd3] bg-[#fff1f2] text-[#be123c]';
+  }
+  if (status === 'disabled') {
+    return 'border-[#e2e8f0] bg-[#f8fafc] text-[#64748b]';
+  }
+  return 'border-[#fed7aa] bg-[#fff7ed] text-[#c2410c]';
+}
+
+function metadataNumber(task: AdminBackgroundTask | null | undefined, key: string) {
+  const value = task?.metadata?.[key];
+  return typeof value === 'number' ? value : null;
+}
+
+function metadataString(task: AdminBackgroundTask | null | undefined, key: string) {
+  const value = task?.metadata?.[key];
+  return typeof value === 'string' ? value : null;
 }
 
 function formatUsageDate(value: string) {
@@ -196,8 +251,12 @@ export function AdminPage() {
   const { user, isLoading } = useAuth();
   const [range, setRange] = useState<'24h' | '7d'>('24h');
   const [tokenUsageRange, setTokenUsageRange] = useState<'weekly' | 'monthly'>('weekly');
+  const [tokenDetailPage, setTokenDetailPage] = useState(1);
   const [metrics, setMetrics] = useState<AdminOnlineMetrics | null>(null);
   const [tokenUsage, setTokenUsage] = useState<AdminLlmTokenUsageMetrics | null>(null);
+  const [backgroundTasks, setBackgroundTasks] = useState<AdminBackgroundTasksResponse | null>(null);
+  const [paperAnalysisEnabled, setPaperAnalysisEnabled] = useState(false);
+  const [paperAnalysisIntervalMinutes, setPaperAnalysisIntervalMinutes] = useState('');
   const [users, setUsers] = useState<AdminUserListResponse | null>(null);
   const [llmProviders, setLlmProviders] = useState<AdminLlmProvider[]>([]);
   const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string | null>(null);
@@ -207,8 +266,10 @@ export function AdminPage() {
   const [page, setPage] = useState(1);
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isUpdatingPaperAnalysis, setIsUpdatingPaperAnalysis] = useState(false);
   const [isSyncingHfDaily, setIsSyncingHfDaily] = useState(false);
   const [hfDailyMessage, setHfDailyMessage] = useState<string | null>(null);
+  const [backgroundTaskMessage, setBackgroundTaskMessage] = useState<string | null>(null);
   const [currentPassword, setCurrentPassword] = useState('');
   const [newPassword, setNewPassword] = useState('');
   const [passwordMessage, setPasswordMessage] = useState<string | null>(null);
@@ -248,14 +309,20 @@ export function AdminPage() {
     setIsRefreshing(true);
     setError(null);
     try {
-      const [nextMetrics, nextTokenUsage, nextUsers, nextLlmProviders] = await Promise.all([
+      const [nextMetrics, nextTokenUsage, nextBackgroundTasks, nextUsers, nextLlmProviders] = await Promise.all([
         fetchAdminOnlineMetrics(range),
         fetchAdminLlmTokenUsageMetrics(),
+        fetchAdminBackgroundTasks(),
         fetchAdminUsers(page, search),
         fetchAdminLlmProviders(),
       ]);
       setMetrics(nextMetrics);
       setTokenUsage(nextTokenUsage);
+      setBackgroundTasks(nextBackgroundTasks);
+      const nextPaperAnalysisTask = nextBackgroundTasks.tasks.find((task) => task.id === 'paper_analysis');
+      const nextIntervalSeconds = metadataNumber(nextPaperAnalysisTask, 'check_interval_seconds') ?? 86400;
+      setPaperAnalysisEnabled(Boolean(nextPaperAnalysisTask?.enabled));
+      setPaperAnalysisIntervalMinutes(String(Math.max(1, Math.round(nextIntervalSeconds / 60))));
       setUsers(nextUsers);
       setLlmProviders(nextLlmProviders.providers);
       setSelectedLlmProviderId((current) => {
@@ -302,12 +369,24 @@ export function AdminPage() {
       active_model: selectedProvider.active_model ?? selectedProvider.models[0]?.model_name ?? '',
     })
     : null;
+  const paperAnalysisTask = backgroundTasks?.tasks.find((task) => task.id === 'paper_analysis') ?? null;
+  const systemTasks = backgroundTasks?.tasks.filter((task) => task.owner === 'system') ?? [];
   const trendData = metrics?.trend ?? [];
   const selectedTokenUsage = tokenUsageRange === 'weekly' ? tokenUsage?.weekly : tokenUsage?.monthly;
   const tokenDailyTotals = selectedTokenUsage?.daily_totals ?? [];
   const tokenDailyRows = selectedTokenUsage?.daily ?? [];
   const tokenTotals = selectedTokenUsage?.totals;
   const tokenAxisWidth = tokenYAxisWidth(tokenDailyTotals);
+  const tokenDetailPages = Math.max(1, Math.ceil(tokenDailyRows.length / TOKEN_DETAIL_PAGE_SIZE));
+  const currentTokenDetailPage = Math.min(tokenDetailPage, tokenDetailPages);
+  const pagedTokenDailyRows = tokenDailyRows.slice(
+    (currentTokenDetailPage - 1) * TOKEN_DETAIL_PAGE_SIZE,
+    currentTokenDetailPage * TOKEN_DETAIL_PAGE_SIZE,
+  );
+
+  useEffect(() => {
+    setTokenDetailPage((current) => Math.min(current, tokenDetailPages));
+  }, [tokenDetailPages]);
 
   if (isLoading) {
     return (
@@ -494,6 +573,31 @@ export function AdminPage() {
     }
   };
 
+  const savePaperAnalysisTask = async () => {
+    const intervalMinutes = Number(paperAnalysisIntervalMinutes);
+    if (!Number.isFinite(intervalMinutes) || intervalMinutes < 1) {
+      setError('后台分析间隔至少需要 1 分钟');
+      return;
+    }
+
+    setError(null);
+    setBackgroundTaskMessage(null);
+    setIsUpdatingPaperAnalysis(true);
+    try {
+      const payload = await updateAdminPaperAnalysisTask({
+        enabled: paperAnalysisEnabled,
+        check_interval_seconds: Math.round(intervalMinutes * 60),
+      });
+      setBackgroundTasks(payload);
+      setBackgroundTaskMessage('论文后台分析配置已更新');
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '更新后台分析配置失败');
+    } finally {
+      setIsUpdatingPaperAnalysis(false);
+    }
+  };
+
   const syncHfDailyPapers = async () => {
     setError(null);
     setHfDailyMessage(null);
@@ -528,8 +632,171 @@ export function AdminPage() {
       </div>
 
       {error ? <div className="rounded-2xl bg-[#fff1f2] p-4 text-sm text-[#b91c1c]">{error}</div> : null}
+      {backgroundTaskMessage ? <div className="rounded-2xl bg-[#eff6ff] p-4 text-sm text-[#1d4ed8]">{backgroundTaskMessage}</div> : null}
       {hfDailyMessage ? <div className="rounded-2xl bg-[#ecfdf5] p-4 text-sm text-[#047857]">{hfDailyMessage}</div> : null}
       {llmMessage ? <div className="rounded-2xl bg-[#eff6ff] p-4 text-sm text-[#1d4ed8]">{llmMessage}</div> : null}
+
+      <section className="rounded-[32px] bg-white p-5 shadow-sm ring-1 ring-black/5">
+        <div className="mb-3.5 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2">
+              <ListChecks className="h-5 w-5 text-[#2563eb]" />
+              <h2 className="text-xl font-semibold text-[#172033]">后台任务</h2>
+            </div>
+            <p className="mt-1 text-sm text-[#728095]">
+              论文分析可由管理员管理；系统任务保持配置驱动。
+            </p>
+          </div>
+          <div className="rounded-full bg-[#f8fafc] px-3 py-1.5 text-xs font-medium text-[#64748b] ring-1 ring-[#e5eaf2]">
+            LLM {backgroundTasks?.llm_configured ? '已配置' : '未配置'}
+          </div>
+        </div>
+
+        <div className="grid items-stretch gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
+          <div className="h-full rounded-[24px] border border-[#e5eaf2] bg-[#f8fafc] p-3.5">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-lg font-semibold text-[#172033]">论文后台分析</h3>
+                  <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${taskStatusClass(paperAnalysisTask?.status ?? 'disabled')}`}>
+                    {taskStatusLabel(paperAnalysisTask?.status ?? 'disabled')}
+                  </span>
+                </div>
+                <p className="mt-1 text-sm text-[#728095]">{paperAnalysisTask?.description ?? '定期扫描未分析论文并写入 LLM 分析结果'}</p>
+              </div>
+              <label className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-sm font-medium text-[#475569] ring-1 ring-[#e5eaf2]">
+                <input
+                  type="checkbox"
+                  checked={paperAnalysisEnabled}
+                  onChange={(event) => setPaperAnalysisEnabled(event.target.checked)}
+                  className="h-4 w-4 rounded border-[#cbd5e1] text-[#2563eb]"
+                />
+                启用
+              </label>
+            </div>
+
+            <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
+              <div className="rounded-2xl bg-white px-3.5 py-2.5 ring-1 ring-[#e5eaf2]">
+                <div className="text-xs font-medium text-[#728095]">待分析论文</div>
+                <div className="mt-1.5 text-2xl font-semibold text-[#172033]">
+                  {formatTokenCount(metadataNumber(paperAnalysisTask, 'unanalyzed_count') ?? 0)}
+                </div>
+              </div>
+              <div className="rounded-2xl bg-white px-3.5 py-2.5 ring-1 ring-[#e5eaf2]">
+                <div className="text-xs font-medium text-[#728095]">当前间隔</div>
+                <div className="mt-1.5 text-2xl font-semibold text-[#172033]">
+                  {formatDuration(metadataNumber(paperAnalysisTask, 'check_interval_seconds'))}
+                </div>
+              </div>
+              <div className="rounded-2xl bg-white px-3.5 py-2.5 ring-1 ring-[#e5eaf2]">
+                <div className="text-xs font-medium text-[#728095]">上一轮结果</div>
+                <div className="mt-1.5 text-sm font-semibold text-[#172033]">
+                  成功 {metadataNumber(paperAnalysisTask, 'last_run_success_count') ?? 0}
+                  <span className="mx-1 text-[#cbd5e1]">/</span>
+                  失败 {metadataNumber(paperAnalysisTask, 'last_run_failed_count') ?? 0}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 grid gap-2.5 lg:grid-cols-[minmax(0,1fr)_auto]">
+              <label className="space-y-1.5">
+                <span className="text-sm font-medium text-[#475569]">检查间隔（分钟）</span>
+                <div className="flex items-center gap-2">
+                  <Clock3 className="h-4 w-4 shrink-0 text-[#94a3b8]" />
+                  <Input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={paperAnalysisIntervalMinutes}
+                    onChange={(event) => setPaperAnalysisIntervalMinutes(event.target.value)}
+                    className="h-10 rounded-2xl bg-white"
+                  />
+                </div>
+              </label>
+              <div className="flex items-end">
+                <Button
+                  className="h-10 rounded-2xl bg-[#2563eb] text-white hover:bg-[#1d4ed8]"
+                  onClick={() => void savePaperAnalysisTask()}
+                  disabled={isUpdatingPaperAnalysis}
+                >
+                  {isUpdatingPaperAnalysis ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                  保存任务配置
+                </Button>
+              </div>
+            </div>
+
+            <div className="mt-3 grid min-w-0 gap-1.5 text-xs text-[#728095] sm:grid-cols-2">
+              <div className="min-w-0 truncate">当前处理：{metadataString(paperAnalysisTask, 'current_paper_id') ?? '-'}</div>
+              <div className="min-w-0 truncate" title={metadataString(paperAnalysisTask, 'last_analyzed_paper_id') ?? undefined}>
+                最近分析：{metadataString(paperAnalysisTask, 'last_analyzed_paper_id') ?? '-'}
+              </div>
+              <div className="min-w-0 truncate">
+                上次开始：{metadataString(paperAnalysisTask, 'last_run_started_at')
+                  ? new Date(metadataString(paperAnalysisTask, 'last_run_started_at') as string).toLocaleString()
+                  : '-'}
+              </div>
+              <div className="min-w-0 truncate">
+                上次结束：{metadataString(paperAnalysisTask, 'last_run_finished_at')
+                  ? new Date(metadataString(paperAnalysisTask, 'last_run_finished_at') as string).toLocaleString()
+                  : '-'}
+              </div>
+            </div>
+          </div>
+
+          <div className="flex h-full flex-col rounded-[24px] border border-[#e5eaf2] bg-white p-3.5">
+            <div className="mb-2.5 flex items-center justify-between gap-3">
+              <h3 className="text-sm font-semibold text-[#172033]">系统内置任务</h3>
+              <span className="text-xs text-[#728095]">{systemTasks.length} 个任务</span>
+            </div>
+            <div className="grid flex-1 auto-rows-fr gap-2.5 2xl:grid-cols-2">
+              {systemTasks.length === 0 ? (
+                <div className="rounded-2xl border border-dashed border-[#dbe3ee] px-4 py-6 text-sm text-[#728095]">
+                  暂无系统任务状态
+                </div>
+              ) : (
+                systemTasks.map((task) => (
+                  <div key={task.id} className="flex h-full flex-col justify-between rounded-2xl border border-[#edf2f7] bg-[#f8fafc] px-3 py-2.5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="truncate text-sm font-semibold text-[#172033]">{task.name}</div>
+                        <div className="mt-0.5 truncate text-xs text-[#728095]">{task.description}</div>
+                      </div>
+                      <span className={`shrink-0 rounded-full border px-2 py-0.5 text-xs font-medium ${taskStatusClass(task.status)}`}>
+                        {taskStatusLabel(task.status)}
+                      </span>
+                    </div>
+                    <div className="mt-2 flex flex-wrap gap-1.5 text-xs text-[#728095]">
+                      <span className="rounded-full bg-white px-2 py-0.5 ring-1 ring-[#e5eaf2]">
+                        {task.enabled ? '已启用' : '未启用'}
+                      </span>
+                      {metadataNumber(task, 'interval_seconds') ? (
+                        <span className="rounded-full bg-white px-2 py-0.5 ring-1 ring-[#e5eaf2]">
+                          间隔 {formatDuration(metadataNumber(task, 'interval_seconds'))}
+                        </span>
+                      ) : null}
+                      {metadataString(task, 'fetch_time') ? (
+                        <span className="rounded-full bg-white px-2 py-0.5 ring-1 ring-[#e5eaf2]">
+                          {metadataString(task, 'fetch_time')}
+                        </span>
+                      ) : null}
+                      {metadataString(task, 'push_time') ? (
+                        <span className="rounded-full bg-white px-2 py-0.5 ring-1 ring-[#e5eaf2]">
+                          {metadataString(task, 'push_time')}
+                        </span>
+                      ) : null}
+                      {metadataNumber(task, 'active_jobs') ? (
+                        <span className="rounded-full bg-white px-2 py-0.5 ring-1 ring-[#e5eaf2]">
+                          活跃 {metadataNumber(task, 'active_jobs')}
+                        </span>
+                      ) : null}
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section className="rounded-[32px] bg-white p-6 shadow-sm ring-1 ring-black/5">
         <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -891,10 +1158,15 @@ export function AdminPage() {
         </div>
 
         <div className="mt-5">
-          <div className="mb-3 text-sm font-semibold text-[#172033]">每日模型明细</div>
-          <div className="max-h-96 overflow-auto rounded-2xl border border-[#e5eaf2]">
+          <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <div className="text-sm font-semibold text-[#172033]">每日模型明细</div>
+            <div className="text-xs text-[#728095]">
+              共 {tokenDailyRows.length} 条，每页 {TOKEN_DETAIL_PAGE_SIZE} 条
+            </div>
+          </div>
+          <div className="overflow-x-auto rounded-2xl border border-[#e5eaf2]">
             <table className="w-full min-w-[980px] text-left text-sm">
-              <thead className="sticky top-0 bg-[#f8fafc] text-xs text-[#728095]">
+              <thead className="bg-[#f8fafc] text-xs text-[#728095]">
                 <tr>
                   <th className="px-3 py-2">日期</th>
                   <th className="px-3 py-2">模型</th>
@@ -913,7 +1185,7 @@ export function AdminPage() {
                     <td className="px-3 py-4 text-[#728095]" colSpan={9}>暂无 token 消耗</td>
                   </tr>
                 ) : (
-                  tokenDailyRows.map((item) => (
+                  pagedTokenDailyRows.map((item) => (
                     <tr key={`${item.date}:${item.provider_key ?? item.provider_name}:${item.model_name}`} className="border-t border-[#eef2f7]">
                       <td className="px-3 py-2 text-[#475569]">{formatUsageDate(item.date)}</td>
                       <td className="px-3 py-2">
@@ -932,6 +1204,27 @@ export function AdminPage() {
               </tbody>
             </table>
           </div>
+          {tokenDailyRows.length > TOKEN_DETAIL_PAGE_SIZE ? (
+            <div className="mt-3 flex items-center justify-end gap-2">
+              <Button
+                variant="outline"
+                className="rounded-full"
+                disabled={currentTokenDetailPage <= 1}
+                onClick={() => setTokenDetailPage((current) => Math.max(1, current - 1))}
+              >
+                上一页
+              </Button>
+              <span className="text-sm text-[#728095]">{currentTokenDetailPage} / {tokenDetailPages}</span>
+              <Button
+                variant="outline"
+                className="rounded-full"
+                disabled={currentTokenDetailPage >= tokenDetailPages}
+                onClick={() => setTokenDetailPage((current) => Math.min(tokenDetailPages, current + 1))}
+              >
+                下一页
+              </Button>
+            </div>
+          ) : null}
         </div>
       </section>
 
