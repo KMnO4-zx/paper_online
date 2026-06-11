@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { BookMarked, Github, LogOut, Radio, Shield } from 'lucide-react';
+import { BookMarked, Github, LogOut, MessageSquare, Radio, Shield } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { fetchOnlineCount, sendHeartbeat } from '@/lib/api';
@@ -8,9 +8,10 @@ import { navigate, useAppLocation } from '@/lib/router';
 import { getUserId } from '@/lib/storage';
 
 const navDockButtonClass =
-  'h-9 rounded-full border border-transparent bg-transparent px-3 text-sm font-semibold text-[#425166] shadow-none transition hover:border-white/80 hover:bg-white/78 hover:text-[#172033] hover:shadow-[0_10px_28px_rgba(15,23,42,0.08)]';
+  'h-9 rounded-full border border-transparent bg-transparent px-2.5 text-[13px] font-semibold text-[#425166] shadow-none transition hover:border-white/80 hover:bg-white/78 hover:text-[#172033] hover:shadow-[0_10px_28px_rgba(15,23,42,0.08)]';
 const navDockActiveButtonClass =
-  'h-9 rounded-full border border-white/80 bg-white/82 px-3 text-sm font-semibold text-[#172033] shadow-[0_10px_28px_rgba(15,23,42,0.08)] transition hover:bg-white hover:text-[#172033]';
+  'h-9 rounded-full border border-white/80 bg-white/82 px-2.5 text-[13px] font-semibold text-[#172033] shadow-[0_10px_28px_rgba(15,23,42,0.08)] transition hover:bg-white hover:text-[#172033]';
+const feedbackFormUrl = 'https://rcnpx636fedp.feishu.cn/share/base/form/shrcn8zCkNPabSlIaOzTk139Rxh';
 
 export function SiteNavbar() {
   const location = useAppLocation();
@@ -99,8 +100,8 @@ export function SiteNavbar() {
           </div>
         </button>
 
-        <div className="flex min-w-0 items-center gap-1.5 rounded-full border border-white/70 bg-white/48 p-1 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
-          <div className="hidden h-9 shrink-0 items-center gap-2 rounded-full border border-transparent px-3 text-sm font-medium text-[#526174] md:flex">
+        <div className="flex min-w-0 items-center gap-1 rounded-full border border-white/70 bg-white/48 p-1 shadow-[0_18px_55px_rgba(15,23,42,0.08)] backdrop-blur-xl">
+          <div className="hidden h-9 shrink-0 items-center gap-1.5 rounded-full border border-transparent px-2.5 text-[13px] font-medium text-[#526174] md:flex">
             <Radio className="h-4 w-4 text-[#16a34a]" />
             <span>{onlineCount} 人在线</span>
           </div>
@@ -111,7 +112,7 @@ export function SiteNavbar() {
                 className={location.pathname === '/me' ? navDockActiveButtonClass : navDockButtonClass}
                 onClick={() => navigate('/me')}
               >
-                <BookMarked className="mr-2 h-4 w-4 text-[#2563eb]" />
+                <BookMarked className="mr-1.5 h-4 w-4 text-[#2563eb]" />
                 <span className="hidden sm:inline">我的论文</span>
               </Button>
               {user.role === 'admin' ? (
@@ -120,21 +121,13 @@ export function SiteNavbar() {
                   className={location.pathname === '/admin' ? navDockActiveButtonClass : navDockButtonClass}
                   onClick={() => navigate('/admin')}
                 >
-                  <Shield className="mr-2 h-4 w-4 text-[#c2410c]" />
+                  <Shield className="mr-1.5 h-4 w-4 text-[#c2410c]" />
                   <span className="hidden sm:inline">后台</span>
                 </Button>
               ) : null}
-              <div className="hidden h-9 max-w-[14rem] items-center truncate rounded-full border border-white/70 bg-white/55 px-3 text-sm text-[#586578] lg:flex">
+              <div className="hidden h-9 max-w-[10rem] items-center truncate rounded-full border border-white/70 bg-white/55 px-2.5 text-[13px] text-[#586578] lg:flex">
                 {user.email}
               </div>
-              <Button
-                variant="outline"
-                className={navDockButtonClass}
-                onClick={() => void logout()}
-              >
-                <LogOut className="mr-2 h-4 w-4 text-[#64748b]" />
-                <span className="hidden sm:inline">退出</span>
-              </Button>
             </>
           ) : (
             <>
@@ -146,7 +139,7 @@ export function SiteNavbar() {
                 登录
               </Button>
               <Button
-                className="h-9 rounded-full bg-gradient-to-r from-[#ff9900] to-[#ff7a00] px-4 text-sm font-semibold text-white shadow-[0_12px_34px_rgba(255,122,0,0.28)] transition hover:from-[#ff8a00] hover:to-[#ff6f00]"
+                className="h-9 rounded-full bg-gradient-to-r from-[#ff9900] to-[#ff7a00] px-3.5 text-[13px] font-semibold text-white shadow-[0_12px_34px_rgba(255,122,0,0.28)] transition hover:from-[#ff8a00] hover:to-[#ff6f00]"
                 onClick={() => navigate('/register')}
               >
                 注册
@@ -165,9 +158,27 @@ export function SiteNavbar() {
             className={`${navDockButtonClass} hidden sm:inline-flex`}
             onClick={() => window.open('https://github.com/KMnO4-zx/paper_online', '_blank', 'noopener,noreferrer')}
           >
-            <Github className="mr-2 h-4 w-4 text-[#334155]" />
+            <Github className="mr-1.5 h-4 w-4 text-[#334155]" />
             GitHub
           </Button>
+          <Button
+            variant="outline"
+            className={`${navDockButtonClass} hidden sm:inline-flex`}
+            onClick={() => window.open(feedbackFormUrl, '_blank', 'noopener,noreferrer')}
+          >
+            <MessageSquare className="mr-1.5 h-4 w-4 text-[#0891b2]" />
+            反馈
+          </Button>
+          {user ? (
+            <Button
+              variant="outline"
+              className={navDockButtonClass}
+              onClick={() => void logout()}
+            >
+              <LogOut className="mr-1.5 h-4 w-4 text-[#64748b]" />
+              <span className="hidden sm:inline">退出</span>
+            </Button>
+          ) : null}
         </div>
       </div>
     </header>
