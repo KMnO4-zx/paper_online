@@ -114,10 +114,11 @@ export function HomePage() {
 
               <div className="space-y-5">
                 <h1 className="max-w-5xl text-balance text-4xl font-semibold leading-[1.08] tracking-tight text-[#101827] sm:text-5xl lg:text-5xl xl:text-6xl">
-                  在论文海里先看见值得精读的信号
+                  <span className="block">AI 帮你快速初筛，</span>
+                  <span className="block">把好论文留给自己精读。</span>
                 </h1>
                 <p className="max-w-3xl text-base leading-8 text-[#526174] sm:text-lg">
-                  批量浏览 AI 会议论文、粘贴 arXiv 链接并自动生成分析，把“先筛一遍”变成一个快速、稳定、可复用的研究入口。
+                  Paper Insight 帮你快速抓住论文重点，识别代码开源情况、任务设置、评价指标与核心贡献，把真正值得深入阅读的论文留给你自己。
                 </p>
               </div>
 
