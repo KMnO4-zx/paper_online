@@ -15,6 +15,7 @@ import { ReasoningStreamPanel } from '@/components/reasoning-stream-panel';
 import { RichContent } from '@/components/rich-content';
 import { fetchPaperInfo, fetchPaperMarks, paperApiPath, streamSse, updatePaperMark } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { buildConferenceKeywordSearchPath, getConferenceSlugFromVenue } from '@/lib/constants';
 import { getVenueParts, normalizeKeywords } from '@/lib/content';
 import { navigate } from '@/lib/router';
 import type { Paper } from '@/types';
@@ -230,6 +231,7 @@ export function PaperPage({ paperId }: PaperPageProps) {
   }, [loadAnalysis]);
 
   const venue = getVenueParts(paper?.venue);
+  const conferenceSlug = getConferenceSlugFromVenue(paper?.venue);
   const keywords = normalizeKeywords(paper?.keywords);
   const pdfUrl = paper?.pdf || `https://openreview.net/pdf?id=${paperId}`;
   const aiTutorPrompt = buildPaperTutorPrompt(pdfUrl);
@@ -258,6 +260,16 @@ export function PaperPage({ paperId }: PaperPageProps) {
       return false;
     }
     return true;
+  };
+  const openKeywordSearch = (keyword: string) => {
+    if (!conferenceSlug) {
+      return;
+    }
+
+    const keywordSearchPath = buildConferenceKeywordSearchPath(paper?.venue, keyword);
+    if (keywordSearchPath) {
+      navigate(keywordSearchPath);
+    }
   };
 
   return (
@@ -315,19 +327,38 @@ export function PaperPage({ paperId }: PaperPageProps) {
                         {paper.primary_area}
                       </Badge>
                     ) : null}
-                    {keywords.slice(0, 6).map((keyword, index) => (
-                      <Badge
-                        key={`${paper.id}-${keyword}`}
-                        variant="outline"
-                        className={
-                          index % 2 === 0
-                            ? 'border-orange-100 bg-orange-50 px-3 py-1 text-sm text-orange-700'
-                            : 'border-violet-100 bg-violet-50 px-3 py-1 text-sm text-violet-700'
-                        }
-                      >
-                        {keyword}
-                      </Badge>
-                    ))}
+                    {keywords.slice(0, 6).map((keyword, index) => {
+                      const className =
+                        index % 2 === 0
+                          ? 'border-orange-100 bg-orange-50 px-3 py-1 text-sm text-orange-700'
+                          : 'border-violet-100 bg-violet-50 px-3 py-1 text-sm text-violet-700';
+
+                      if (!conferenceSlug) {
+                        return (
+                          <Badge key={`${paper.id}-${keyword}`} variant="outline" className={className}>
+                            {keyword}
+                          </Badge>
+                        );
+                      }
+
+                      return (
+                        <Badge
+                          key={`${paper.id}-${keyword}`}
+                          asChild
+                          variant="outline"
+                          className={`${className} cursor-pointer transition hover:-translate-y-0.5 hover:shadow-sm`}
+                        >
+                          <button
+                            type="button"
+                            aria-label={`搜索关键词 ${keyword}`}
+                            title={`搜索关键词：${keyword}`}
+                            onClick={() => openKeywordSearch(keyword)}
+                          >
+                            {keyword}
+                          </button>
+                        </Badge>
+                      );
+                    })}
                   </div>
                 </div>
 

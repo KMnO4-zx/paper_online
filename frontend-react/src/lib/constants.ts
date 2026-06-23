@@ -49,3 +49,41 @@ export const CONFERENCE_MAP = CONFERENCES.reduce<Record<ConferenceSlug, Conferen
 export function getConferenceDefinition(venue: string): ConferenceDefinition | null {
   return CONFERENCE_MAP[venue as ConferenceSlug] ?? null;
 }
+
+export function getConferenceSlugFromVenue(venue?: string | null): ConferenceSlug | null {
+  if (!venue) {
+    return null;
+  }
+
+  const normalizedVenue = venue.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+  const year = normalizedVenue.match(/\b(20\d{2})\b/)?.[1] ?? null;
+
+  const conference = CONFERENCES.find((candidate) => {
+    const normalizedName = candidate.name.toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
+    const acronym = normalizedName.split(' ')[0];
+
+    return normalizedVenue.includes(normalizedName) || (
+      year === String(candidate.year) && normalizedVenue.split(' ').includes(acronym)
+    );
+  });
+
+  return (conference?.id as ConferenceSlug | undefined) ?? null;
+}
+
+export function buildConferenceKeywordSearchPath(venue: string | null | undefined, keyword: string): string | null {
+  const conferenceSlug = getConferenceSlugFromVenue(venue);
+  const query = keyword.trim();
+
+  if (!conferenceSlug || !query) {
+    return null;
+  }
+
+  const params = new URLSearchParams({
+    q: query,
+    title: 'false',
+    abstract: 'false',
+    keywords: 'true',
+  });
+
+  return `/conference/${conferenceSlug}?${params.toString()}`;
+}
