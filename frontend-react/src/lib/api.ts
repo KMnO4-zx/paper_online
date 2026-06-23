@@ -198,7 +198,8 @@ export async function fetchOnlineCount(): Promise<number> {
 }
 
 export async function fetchChangelogMarkdown(): Promise<string> {
-  const response = await apiRequest('/changelog.md');
+  const params = new URLSearchParams({ ts: String(Date.now()) });
+  const response = await apiRequest(`/changelog.md?${params.toString()}`, { cache: 'no-store' });
   if (!response.ok) {
     throw new Error(response.statusText || '更新日志加载失败');
   }
