@@ -17,6 +17,7 @@ import { fetchPaperInfo, fetchPaperMarks, paperApiPath, streamSse, updatePaperMa
 import { useAuth } from '@/lib/auth';
 import { buildConferenceKeywordSearchPath, getConferenceSlugFromVenue } from '@/lib/constants';
 import { getVenueParts, normalizeKeywords } from '@/lib/content';
+import { useZoteroPaperMetadata } from '@/hooks/use-zotero-paper-metadata';
 import { navigate } from '@/lib/router';
 import type { Paper } from '@/types';
 
@@ -67,6 +68,9 @@ export function PaperPage({ paperId }: PaperPageProps) {
   const [backButtonProgress, setBackButtonProgress] = useState(0);
   const analysisRequestIdRef = useRef(0);
   const analysisAbortRef = useRef<AbortController | null>(null);
+  const zoteroMetadataPaper = paper?.id === paperId ? paper : null;
+
+  useZoteroPaperMetadata(zoteroMetadataPaper);
 
   useEffect(() => {
     let active = true;
