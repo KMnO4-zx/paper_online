@@ -684,7 +684,6 @@ export function AdminPage() {
       {error ? <div className="rounded-2xl bg-[#fff1f2] p-4 text-sm text-[#b91c1c]">{error}</div> : null}
       {backgroundTaskMessage ? <div className="rounded-2xl bg-[#eff6ff] p-4 text-sm text-[#1d4ed8]">{backgroundTaskMessage}</div> : null}
       {hfDailyMessage ? <div className="rounded-2xl bg-[#ecfdf5] p-4 text-sm text-[#047857]">{hfDailyMessage}</div> : null}
-      {llmMessage ? <div className="rounded-2xl bg-[#eff6ff] p-4 text-sm text-[#1d4ed8]">{llmMessage}</div> : null}
 
       <section className="rounded-[32px] bg-white p-5 shadow-sm ring-1 ring-black/5">
         <div className="mb-3.5 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
@@ -850,7 +849,7 @@ export function AdminPage() {
 
       <section className="rounded-[32px] bg-white p-6 shadow-sm ring-1 ring-black/5">
         <div className="mb-4 flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div>
+          <div className="shrink-0">
             <div className="flex items-center gap-2">
               <Brain className="h-5 w-5 text-[#ff7a00]" />
               <h2 className="text-xl font-semibold text-[#172033]">大模型配置</h2>
@@ -859,10 +858,17 @@ export function AdminPage() {
               当前：{activeProvider ? `${activeProvider.name} / ${activeProvider.active_model ?? '未选择模型'}` : '未配置'}
             </p>
           </div>
-          <Button variant="outline" className="rounded-full" onClick={() => void testActiveLlm()} disabled={isTestingLlm || !activeProvider}>
-            {isTestingLlm ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <TestTube2 className="mr-2 h-4 w-4" />}
-            测试当前模型
-          </Button>
+          <div className="flex flex-1 flex-col gap-3 lg:flex-row lg:items-start lg:justify-end">
+            {llmMessage ? (
+              <div className="min-w-0 flex-1 rounded-2xl bg-[#eff6ff] px-4 py-3 text-sm text-[#1d4ed8]">
+                {llmMessage}
+              </div>
+            ) : null}
+            <Button variant="outline" className="shrink-0 rounded-full" onClick={() => void testActiveLlm()} disabled={isTestingLlm || !activeProvider}>
+              {isTestingLlm ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <TestTube2 className="mr-2 h-4 w-4" />}
+              测试当前模型
+            </Button>
+          </div>
         </div>
 
         <div className="grid items-start gap-5 xl:grid-cols-[300px_minmax(0,1fr)]">
