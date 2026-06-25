@@ -8,6 +8,7 @@ import type {
   AdminLlmTokenUsageMetrics,
   AdminOnlineMetrics,
   AdminUserListResponse,
+  AdminUserSortBy,
   AuthResponse,
   ChatMessage,
   ChatSessionSummary,
@@ -24,6 +25,7 @@ import type {
   PaperListResponse,
   HfDailySyncResponse,
   SearchFilters,
+  SortDirection,
 } from '@/types';
 
 const DEV_API_BASE =
@@ -332,8 +334,15 @@ export async function syncAdminHfDailyPapers(): Promise<HfDailySyncResponse> {
 export async function fetchAdminUsers(
   page: number,
   search: string,
+  sortBy: AdminUserSortBy = 'online',
+  sortDirection: SortDirection = 'desc',
 ): Promise<AdminUserListResponse> {
-  const params = new URLSearchParams({ page: String(page), limit: '10' });
+  const params = new URLSearchParams({
+    page: String(page),
+    limit: '10',
+    sort_by: sortBy,
+    sort_direction: sortDirection,
+  });
   if (search.trim()) {
     params.set('search', search.trim());
   }

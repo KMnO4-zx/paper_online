@@ -1504,13 +1504,21 @@ async def admin_list_users(
     search: str = "",
     page: int = 1,
     limit: int = 10,
+    sort_by: str = "online",
+    sort_direction: str = "desc",
     admin: dict = Depends(require_admin_user),
 ):
     safe_page = max(page, 1)
     safe_limit = min(max(limit, 1), 100)
     offset = (safe_page - 1) * safe_limit
     try:
-        users, total = list_users(search.strip() or None, offset, safe_limit)
+        users, total = list_users(
+            search.strip() or None,
+            offset,
+            safe_limit,
+            sort_by=sort_by,
+            sort_direction=sort_direction,
+        )
         return {
             "users": users,
             "total": total,

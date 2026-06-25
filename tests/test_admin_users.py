@@ -59,14 +59,17 @@ class FakeConnection:
         return self.cursor_instance
 
 
-def test_list_users_includes_online_state_and_orders_online_first(monkeypatch):
-    cursor = FakeCursor()
-
+def install_fake_connection(monkeypatch, cursor):
     @contextmanager
     def fake_get_connection():
         yield FakeConnection(cursor)
 
     monkeypatch.setattr(database, "_get_connection", fake_get_connection)
+
+
+def test_list_users_includes_online_state_and_orders_online_first(monkeypatch):
+    cursor = FakeCursor()
+    install_fake_connection(monkeypatch, cursor)
 
     users, total = database.list_users(search=None, offset=0, limit=10)
 
@@ -80,3 +83,33 @@ def test_list_users_includes_online_state_and_orders_online_first(monkeypatch):
     assert "WITH active_presence AS" in list_sql
     assert "MAX(last_seen_at) AS online_last_seen_at" in list_sql
     assert "(active_presence.user_id IS NOT NULL) DESC" in list_sql
+
+
+def test_list_users_can_order_by_created_at(monkeypatch):
+    cursor = FakeCursor()
+    install_fake_connection(monkeypatch, cursor)
+
+    database.list_users(search=None, offset=0, limit=10, sort_by="created_at", sort_direction="asc")
+
+    list_sql = cursor.calls[1][0]
+    assert "ORDER BY u.created_at ASC, u.email ASC" in list_sql
+
+
+def test_list_users_can_order_by_last_login_at(monkeypatch):
+    cursor = FakeCursor()
+    install_fake_connection(monkeypatch, cursor)
+
+    database.list_users(search=None, offset=0, limit=10, sort_by="last_login_at", sort_direction="desc")
+
+    list_sql = cursor.calls[1][0]
+    assert "ORDER BY u.last_login_at DESC NULLS LAST, u.created_at DESC, u.email ASC" in list_sql
+
+
+def test_list_users_can_order_offline_first(monkeypatch):
+    cursor = FakeCursor()
+    install_fake_connection(monkeypatch, cursor)
+
+    database.list_users(search=None, offset=0, limit=10, sort_by="online", sort_direction="asc")
+
+    list_sql = cursor.calls[1][0]
+    assert "ORDER BY (active_presence.user_id IS NOT NULL) ASC" in list_sql

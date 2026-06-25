@@ -982,8 +982,25 @@ def count_active_admins() -> int:
     return _run_with_retry(operation, "count_active_admins")
 
 
-def list_users(search: str | None, offset: int, limit: int) -> tuple[list[dict], int]:
+def list_users(
+    search: str | None,
+    offset: int,
+    limit: int,
+    sort_by: str = "online",
+    sort_direction: str = "desc",
+) -> tuple[list[dict], int]:
     cutoff = datetime.now(timezone.utc) - timedelta(seconds=settings.presence.online_timeout_seconds)
+    safe_sort_direction = "ASC" if sort_direction == "asc" else "DESC"
+    if sort_by == "created_at":
+        order_by = f"u.created_at {safe_sort_direction}, u.email ASC"
+    elif sort_by == "last_login_at":
+        order_by = f"u.last_login_at {safe_sort_direction} NULLS LAST, u.created_at DESC, u.email ASC"
+    else:
+        order_by = (
+            f"(active_presence.user_id IS NOT NULL) {safe_sort_direction}, "
+            "active_presence.online_last_seen_at DESC NULLS LAST, "
+            "u.created_at DESC, u.email ASC"
+        )
 
     def operation() -> tuple[list[dict], int]:
         params: list[object] = []
@@ -1012,10 +1029,7 @@ def list_users(search: str | None, offset: int, limit: int) -> tuple[list[dict],
                     FROM users u
                     LEFT JOIN active_presence ON active_presence.user_id = u.id
                     {where}
-                    ORDER BY
-                        (active_presence.user_id IS NOT NULL) DESC,
-                        active_presence.online_last_seen_at DESC NULLS LAST,
-                        u.created_at DESC
+                    ORDER BY {order_by}
                     LIMIT %s OFFSET %s
                     """,
                     [cutoff, *params, limit, offset],

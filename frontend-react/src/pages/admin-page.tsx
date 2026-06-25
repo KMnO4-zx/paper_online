@@ -1,6 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   Activity,
+  ArrowDown,
+  ArrowUp,
   Brain,
   Clock3,
   KeyRound,
@@ -67,8 +69,10 @@ import type {
   AdminOnlineMetrics,
   AdminUser,
   AdminUserListResponse,
+  AdminUserSortBy,
   LlmTokenUsageDailyTotal,
   OnlineTrendPoint,
+  SortDirection,
 } from '@/types';
 
 type LlmProviderDraft = {
@@ -264,8 +268,11 @@ export function AdminPage() {
   const [modelDrafts, setModelDrafts] = useState<Record<string, string>>({});
   const [search, setSearch] = useState('');
   const [page, setPage] = useState(1);
+  const [userSortBy, setUserSortBy] = useState<AdminUserSortBy>('online');
+  const [userSortDirection, setUserSortDirection] = useState<SortDirection>('desc');
   const [error, setError] = useState<string | null>(null);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isRefreshingUsers, setIsRefreshingUsers] = useState(false);
   const [isUpdatingPaperAnalysis, setIsUpdatingPaperAnalysis] = useState(false);
   const [isSyncingHfDaily, setIsSyncingHfDaily] = useState(false);
   const [hfDailyMessage, setHfDailyMessage] = useState<string | null>(null);
@@ -288,19 +295,7 @@ export function AdminPage() {
   });
 
   const canAccess = user?.role === 'admin';
-  const displayedUsers = useMemo(() => {
-    return [...(users?.users ?? [])].sort((first, second) => {
-      if (first.is_online !== second.is_online) {
-        return first.is_online ? -1 : 1;
-      }
-      const firstSeenAt = first.online_last_seen_at ? new Date(first.online_last_seen_at).getTime() : 0;
-      const secondSeenAt = second.online_last_seen_at ? new Date(second.online_last_seen_at).getTime() : 0;
-      if (firstSeenAt !== secondSeenAt) {
-        return secondSeenAt - firstSeenAt;
-      }
-      return new Date(second.created_at).getTime() - new Date(first.created_at).getTime();
-    });
-  }, [users?.users]);
+  const displayedUsers = users?.users ?? [];
 
   const load = useCallback(async () => {
     if (!canAccess) {
@@ -313,7 +308,7 @@ export function AdminPage() {
         fetchAdminOnlineMetrics(range),
         fetchAdminLlmTokenUsageMetrics(),
         fetchAdminBackgroundTasks(),
-        fetchAdminUsers(page, search),
+        fetchAdminUsers(page, search, userSortBy, userSortDirection),
         fetchAdminLlmProviders(),
       ]);
       setMetrics(nextMetrics);
@@ -350,11 +345,66 @@ export function AdminPage() {
     } finally {
       setIsRefreshing(false);
     }
-  }, [canAccess, page, range, search]);
+  }, [canAccess, page, range, search, userSortBy, userSortDirection]);
+
+  const refreshUsers = useCallback(async (nextPage = page) => {
+    if (!canAccess) {
+      return;
+    }
+    setIsRefreshingUsers(true);
+    setError(null);
+    try {
+      const [nextMetrics, nextUsers] = await Promise.all([
+        fetchAdminOnlineMetrics(range),
+        fetchAdminUsers(nextPage, search, userSortBy, userSortDirection),
+      ]);
+      setMetrics(nextMetrics);
+      setUsers(nextUsers);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '刷新用户列表失败');
+    } finally {
+      setIsRefreshingUsers(false);
+    }
+  }, [canAccess, page, range, search, userSortBy, userSortDirection]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  const toggleUserSort = (sortBy: AdminUserSortBy) => {
+    setPage(1);
+    if (userSortBy === sortBy) {
+      setUserSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'));
+      return;
+    }
+    setUserSortBy(sortBy);
+    setUserSortDirection('desc');
+  };
+
+  const runUserSearch = () => {
+    setPage(1);
+    void refreshUsers(1);
+  };
+
+  const renderUserDateSortButton = (sortBy: Extract<AdminUserSortBy, 'created_at' | 'last_login_at'>) => {
+    const isActive = userSortBy === sortBy;
+    const isAscending = isActive && userSortDirection === 'asc';
+    return (
+      <Button
+        type="button"
+        variant={isActive ? 'default' : 'outline'}
+        size="sm"
+        className="h-7 rounded-full px-2 text-xs"
+        onClick={() => toggleUserSort(sortBy)}
+        title={isActive ? (isAscending ? '切换为倒序' : '切换为正序') : '按此列排序'}
+      >
+        {isAscending ? <ArrowUp className="h-3.5 w-3.5" /> : <ArrowDown className="h-3.5 w-3.5" />}
+        {isActive ? (isAscending ? '正序' : '倒序') : '排序'}
+      </Button>
+    );
+  };
+
+  const onlineSortLabel = userSortBy === 'online' && userSortDirection === 'asc' ? '离线优先' : '在线优先';
 
   const activeProvider = llmProviders.find((provider) => provider.is_active) ?? null;
   const selectedProvider = llmProviders.find((provider) => provider.id === selectedLlmProviderId)
@@ -1330,35 +1380,66 @@ export function AdminPage() {
         <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div className="space-y-1">
             <h2 className="text-xl font-semibold text-[#172033]">用户管理</h2>
-            <p className="text-sm text-[#728095]">共 {users?.total ?? 0} 个用户，在线用户优先显示。</p>
+            <p className="text-sm text-[#728095]">
+              共 {users?.total ?? 0} 个用户，当前在线 {metrics?.current.authenticated_count ?? 0} 个登录用户。
+            </p>
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap items-center justify-end gap-2">
+            <Button
+              type="button"
+              variant={userSortBy === 'online' ? 'default' : 'outline'}
+              className="rounded-full"
+              onClick={() => toggleUserSort('online')}
+              title={userSortBy === 'online' ? '切换在线状态排序方向' : '按在线状态排序'}
+            >
+              <Users className="h-4 w-4" />
+              {onlineSortLabel}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              className="rounded-full"
+              onClick={() => void refreshUsers()}
+              disabled={isRefreshingUsers}
+            >
+              {isRefreshingUsers ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCcw className="mr-2 h-4 w-4" />}
+              刷新在线
+            </Button>
             <Input
               value={search}
               onChange={(event) => setSearch(event.target.value)}
               placeholder="搜索邮箱"
-              className="h-10 rounded-full bg-[#f8fafc]"
+              className="h-10 w-[220px] rounded-full bg-[#f8fafc]"
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
-                  setPage(1);
-                  void load();
+                  runUserSearch();
                 }
               }}
             />
-            <Button variant="outline" className="rounded-full" onClick={() => { setPage(1); void load(); }}>
+            <Button variant="outline" className="rounded-full" onClick={runUserSearch}>
               搜索
             </Button>
           </div>
         </div>
         <div className="overflow-x-auto">
-          <table className="w-full min-w-[860px] text-left text-sm">
+          <table className="w-full min-w-[980px] text-left text-sm">
             <thead className="border-b border-[#eef2f7] text-[#728095]">
               <tr>
                 <th className="py-3">邮箱</th>
                 <th>角色</th>
                 <th>状态</th>
-                <th>注册时间</th>
-                <th>最近登录</th>
+                <th>
+                  <div className="flex items-center gap-2">
+                    <span>注册时间</span>
+                    {renderUserDateSortButton('created_at')}
+                  </div>
+                </th>
+                <th>
+                  <div className="flex items-center gap-2">
+                    <span>最近登录</span>
+                    {renderUserDateSortButton('last_login_at')}
+                  </div>
+                </th>
                 <th className="text-right">操作</th>
               </tr>
             </thead>

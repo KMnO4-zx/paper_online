@@ -188,6 +188,10 @@ export interface AdminUserListResponse {
   pages: number;
 }
 
+export type AdminUserSortBy = 'online' | 'created_at' | 'last_login_at';
+
+export type SortDirection = 'asc' | 'desc';
+
 export interface OnlineTrendPoint {
   bucket_at: string;
   count: number;
