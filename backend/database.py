@@ -2578,18 +2578,18 @@ def _legacy_search_rank_score(
     search_title: bool,
     search_abstract: bool,
     matched_keyword_paper_ids: set[str],
-) -> int:
-    score = 0
+) -> float:
+    score = 0.0
     title = (paper.get("title") or "").casefold()
     abstract = (paper.get("abstract") or "").casefold()
     paper_id = paper.get("id") or ""
 
     if search_title and normalized_search in title:
-        score += 3
-    if search_abstract and normalized_search in abstract:
-        score += 2
+        score += 1.0
     if paper_id in matched_keyword_paper_ids:
-        score += 1
+        score += 0.55
+    if search_abstract and normalized_search in abstract:
+        score += 0.35
 
     return score
 
