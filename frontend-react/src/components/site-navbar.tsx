@@ -188,7 +188,7 @@ export function SiteNavbar() {
           <Button
             variant="outline"
             className={`${navDockButtonClass} hidden sm:inline-flex`}
-            onClick={() => window.open('https://github.com/KMnO4-zx/paper_online', '_blank', 'noopener,noreferrer')}
+            onClick={() => window.open('https://github.com/KMnO4-zx/paper-insight', '_blank', 'noopener,noreferrer')}
           >
             <Github className="mr-1.5 h-4 w-4 text-[#334155]" />
             GitHub
