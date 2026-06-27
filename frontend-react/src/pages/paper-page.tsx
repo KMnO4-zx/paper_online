@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu';
 import { ReasoningStreamPanel } from '@/components/reasoning-stream-panel';
 import { RichContent } from '@/components/rich-content';
-import { fetchPaperInfo, fetchPaperMarks, paperApiPath, streamSse, updatePaperMark } from '@/lib/api';
+import { fetchOpenInAiPrompt, fetchPaperInfo, fetchPaperMarks, paperApiPath, streamSse, updatePaperMark } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { buildConferenceKeywordSearchPath, getConferenceSlugFromVenue } from '@/lib/constants';
 import { getVenueParts, normalizeKeywords } from '@/lib/content';
@@ -30,20 +30,6 @@ const BACK_BUTTON_FADE_DISTANCE = 72;
 const BACK_BUTTON_MAX_TRANSLATE_Y = 8;
 const AUTO_VIEWED_DELAY_MS = 10_000;
 const EMPTY_MARKS = { viewed: false, liked: false, favorited: false };
-
-function buildPaperTutorPrompt(pdfUrl: string) {
-  return [
-    '你是一位人工智能领域的专家。我是一位刚入门的人工智能新人，正在学习这篇论文。请你详细的向我讲解教授这篇论文，必要的时候用公式或者代码辅助解释。确保我能够理解每个细节和背景知识和理解论文的motivation还有方法。',
-    '具体来说，请你',
-    '1. 必须详细的讲给我研究背景和动机。 (尽可能的详细)',
-    '2. 详细的介绍核心贡献和方法。 (尽可能的详细)',
-    '3. 详细的讲方法的具体实现，必要的时候有公式和代码。 (尽可能的详细)',
-    '4. 详细的讲一下实验的结果，包括实验的setting和结论。 (尽可能的详细)',
-    '务必按照我的要求做，让我听懂，不然你会有大麻烦。',
-    '',
-    `论文 PDF 链接：${pdfUrl}`,
-  ].join('\n');
-}
 
 function buildChatGptUrl(prompt: string) {
   const params = new URLSearchParams({
@@ -64,6 +50,8 @@ export function PaperPage({ paperId }: PaperPageProps) {
   const [analysisLoading, setAnalysisLoading] = useState(true);
   const [analysisStreaming, setAnalysisStreaming] = useState(false);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+  const [openInAiPrompt, setOpenInAiPrompt] = useState('');
+  const [openInAiPromptError, setOpenInAiPromptError] = useState<string | null>(null);
   const [marks, setMarks] = useState(EMPTY_MARKS);
   const [isLikeAnimating, setIsLikeAnimating] = useState(false);
   const [backButtonProgress, setBackButtonProgress] = useState(0);
@@ -238,25 +226,46 @@ export function PaperPage({ paperId }: PaperPageProps) {
     };
   }, [loadAnalysis]);
 
+  useEffect(() => {
+    let active = true;
+    setOpenInAiPrompt('');
+    setOpenInAiPromptError(null);
+
+    void fetchOpenInAiPrompt(paperId)
+      .then((prompt) => {
+        if (active) {
+          setOpenInAiPrompt(prompt);
+        }
+      })
+      .catch((error) => {
+        if (active) {
+          setOpenInAiPromptError(error instanceof Error ? error.message : '提示词加载失败');
+        }
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [paperId]);
+
   const venue = getVenueParts(paper?.venue);
   const conferenceSlug = getConferenceSlugFromVenue(paper?.venue);
   const keywords = normalizeKeywords(paper?.keywords);
   const pdfUrl = paper?.pdf || `https://openreview.net/pdf?id=${paperId}`;
-  const aiTutorPrompt = buildPaperTutorPrompt(pdfUrl);
-  const aiTutorTargets = [
+  const aiTutorTargets = openInAiPrompt ? [
     {
       id: 'kimi',
       label: 'Kimi',
       description: '使用相同提示词并自动发送',
-      url: `https://www.kimi.com/?prefill_prompt=${encodeURIComponent(aiTutorPrompt)}&send_immediately=true`,
+      url: `https://www.kimi.com/?prefill_prompt=${encodeURIComponent(openInAiPrompt)}&send_immediately=true`,
     },
     {
       id: 'openai',
       label: 'OpenAI ChatGPT',
       description: '使用 ChatGPT Search 深链',
-      url: buildChatGptUrl(aiTutorPrompt),
+      url: buildChatGptUrl(openInAiPrompt),
     },
-  ];
+  ] : [];
   const isBackButtonHidden = backButtonProgress >= 1;
   const backButtonOpacity = 1 - backButtonProgress;
   const requireLogin = () => {
@@ -387,14 +396,19 @@ export function PaperPage({ paperId }: PaperPageProps) {
                       PDF
                     </Button>
                   </a>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button variant="outline" className="rounded-full border-[#d8b4fe] bg-[#faf5ff] text-[#9333ea]">
-                        <Sparkles className="mr-1.5 h-4 w-4" />
-                        Open in AI
-                        <ChevronDown className="ml-0.5 h-4 w-4" />
-                      </Button>
-                    </DropdownMenuTrigger>
+	                <DropdownMenu>
+	                  <DropdownMenuTrigger asChild>
+	                      <Button
+	                        variant="outline"
+	                        className="rounded-full border-[#d8b4fe] bg-[#faf5ff] text-[#9333ea]"
+	                        disabled={!openInAiPrompt}
+	                        title={openInAiPromptError ?? (openInAiPrompt ? 'Open in AI' : '正在加载 AI 提示词')}
+	                      >
+	                        <Sparkles className="mr-1.5 h-4 w-4" />
+	                        {openInAiPrompt ? 'Open in AI' : '加载 AI 提示词'}
+	                        <ChevronDown className="ml-0.5 h-4 w-4" />
+	                      </Button>
+	                    </DropdownMenuTrigger>
                     <DropdownMenuContent
                       align="start"
                       className="w-56 overflow-hidden rounded-2xl border border-white/55 bg-[linear-gradient(135deg,rgba(255,255,255,0.42),rgba(248,245,255,0.30)_46%,rgba(219,234,254,0.24))] p-1.5 shadow-[0_18px_50px_rgba(37,99,235,0.16),inset_0_1px_0_rgba(255,255,255,0.72)] backdrop-blur-3xl backdrop-saturate-150"

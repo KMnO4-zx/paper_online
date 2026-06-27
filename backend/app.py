@@ -119,6 +119,7 @@ from database import (
 from chat import ChatSession
 from background_tasks import BackgroundAnalyzer
 from markdown_utils import normalize_llm_markdown
+from prompt import build_open_in_ai_prompt
 
 logger = logging.getLogger(__name__)
 GITHUB_OAUTH_STATE_COOKIE = "paper_github_oauth_state"
@@ -1680,6 +1681,25 @@ async def get_paper_info(paper_id: str):
         raise HTTPException(status_code=404, detail="Paper not found")
 
     return paper_info
+
+
+@app.get("/paper/{paper_id}/open-in-ai-prompt")
+async def get_paper_open_in_ai_prompt(paper_id: str):
+    try:
+        paper_info = get_or_fetch_paper_info(paper_id)
+    except ArxivInvalidInputError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except ArxivNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ArxivError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    except OpenReviewError as e:
+        raise HTTPException(status_code=_openreview_error_status(e), detail=str(e))
+    except DatabaseError as e:
+        raise HTTPException(status_code=502, detail="Database temporarily unavailable") from e
+
+    pdf_url = paper_info.get("pdf") or f"https://openreview.net/pdf?id={paper_id}"
+    return {"prompt": build_open_in_ai_prompt(pdf_url)}
 
 
 @app.post("/arxiv-papers")

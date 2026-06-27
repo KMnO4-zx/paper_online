@@ -122,6 +122,11 @@ export async function fetchPaperInfo(paperId: string): Promise<Paper> {
   return apiFetch<Paper>(paperApiPath(paperId, '/info'));
 }
 
+export async function fetchOpenInAiPrompt(paperId: string): Promise<string> {
+  const payload = await apiFetch<{ prompt: string }>(paperApiPath(paperId, '/open-in-ai-prompt'));
+  return payload.prompt;
+}
+
 export async function fetchConferencePapers(
   venue: string,
   page: number,
