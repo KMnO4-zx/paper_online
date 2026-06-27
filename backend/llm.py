@@ -264,11 +264,11 @@ class BaseLLM:
     async def get_response(self, prompt: str, **kwargs) -> str:
         params = dict(kwargs)
         request_type = _pop_usage_context(params, "analysis")
+        params.setdefault("temperature", 1.0)
 
         async def _call():
             response = await self.client.chat.completions.create(
                 model=self.model,
-                temperature=1.0,
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant for academic research."},
                     {"role": "user", "content": prompt + "\n\n" + PAPER_ANALYSIS_PROMPT}
@@ -289,11 +289,11 @@ class BaseLLM:
     async def get_response_stream_events(self, prompt: str, **kwargs):
         params = dict(kwargs)
         request_type = _pop_usage_context(params, "analysis_stream")
+        params.setdefault("temperature", 1.0)
         response = await _create_streaming_completion(
             self.client,
             {
                 "model": self.model,
-                "temperature": 1.0,
                 "stream": True,
                 "messages": [
                     {"role": "system", "content": "You are a helpful assistant for academic research."},
@@ -326,11 +326,11 @@ class BaseLLM:
     async def chat(self, messages: list, **kwargs) -> str:
         params = dict(kwargs)
         request_type = _pop_usage_context(params, "chat")
+        params.setdefault("temperature", 1.0)
 
         async def _call():
             response = await self.client.chat.completions.create(
                 model=self.model,
-                temperature=1.0,
                 messages=messages,
                 **params,
             )
@@ -348,11 +348,11 @@ class BaseLLM:
     async def chat_stream_events(self, messages: list, **kwargs):
         params = dict(kwargs)
         request_type = _pop_usage_context(params, "chat_stream")
+        params.setdefault("temperature", 1.0)
         response = await _create_streaming_completion(
             self.client,
             {
                 "model": self.model,
-                "temperature": 1.0,
                 "stream": True,
                 "messages": messages,
                 **params,
@@ -424,11 +424,11 @@ class ManagedLLM:
         client = self._client_for_config(config)
         params = self._parameters(config, kwargs)
         request_type = _pop_usage_context(params, "analysis")
+        params.setdefault("temperature", 1.0)
 
         async def _call():
             response = await client.chat.completions.create(
                 model=config["model_name"],
-                temperature=1.0,
                 messages=[
                     {"role": "system", "content": "You are a helpful assistant for academic research."},
                     {"role": "user", "content": prompt + "\n\n" + PAPER_ANALYSIS_PROMPT},
@@ -452,11 +452,11 @@ class ManagedLLM:
         client = self._client_for_config(config)
         params = self._parameters(config, kwargs)
         request_type = _pop_usage_context(params, "analysis_stream")
+        params.setdefault("temperature", 1.0)
         response = await _create_streaming_completion(
             client,
             {
                 "model": config["model_name"],
-                "temperature": 1.0,
                 "stream": True,
                 "messages": [
                     {"role": "system", "content": "You are a helpful assistant for academic research."},
@@ -491,11 +491,11 @@ class ManagedLLM:
         client = self._client_for_config(config)
         params = self._parameters(config, kwargs)
         request_type = _pop_usage_context(params, "chat")
+        params.setdefault("temperature", 1.0)
 
         async def _call():
             response = await client.chat.completions.create(
                 model=config["model_name"],
-                temperature=1.0,
                 messages=messages,
                 **params,
             )
@@ -516,11 +516,11 @@ class ManagedLLM:
         client = self._client_for_config(config)
         params = self._parameters(config, kwargs)
         request_type = _pop_usage_context(params, "chat_stream")
+        params.setdefault("temperature", 1.0)
         response = await _create_streaming_completion(
             client,
             {
                 "model": config["model_name"],
-                "temperature": 1.0,
                 "stream": True,
                 "messages": messages,
                 **params,

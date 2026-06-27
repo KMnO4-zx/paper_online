@@ -101,3 +101,41 @@ def test_count_unanalyzed_papers_counts_null_llm_responses(monkeypatch):
     assert "COUNT(*) AS total" in sql
     assert "llm_response IS NULL" in sql
     assert params is None
+
+
+def test_count_papers_counts_all_papers(monkeypatch):
+    cursor = FakeCursor()
+
+    @contextmanager
+    def fake_get_connection():
+        yield FakeConnection(cursor)
+
+    monkeypatch.setattr(database, "DATABASE_URL", "postgresql://test/paper_online")
+    monkeypatch.setattr(database, "_get_connection", fake_get_connection)
+
+    total = database.count_papers()
+
+    assert total == 42
+    sql, params = cursor.calls[0]
+    assert "COUNT(*) AS total" in sql
+    assert "FROM papers" in sql
+    assert params is None
+
+
+def test_count_unchecked_code_availability_counts_null_checked_at(monkeypatch):
+    cursor = FakeCursor()
+
+    @contextmanager
+    def fake_get_connection():
+        yield FakeConnection(cursor)
+
+    monkeypatch.setattr(database, "DATABASE_URL", "postgresql://test/paper_online")
+    monkeypatch.setattr(database, "_get_connection", fake_get_connection)
+
+    total = database.count_unchecked_code_availability()
+
+    assert total == 42
+    sql, params = cursor.calls[0]
+    assert "COUNT(*) AS total" in sql
+    assert "code_checked_at IS NULL" in sql
+    assert params is None

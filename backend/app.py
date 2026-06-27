@@ -56,7 +56,10 @@ from database import (
     count_arxiv_paper_read_states,
     count_active_admins,
     count_hf_daily_paper_read_states,
+    count_pending_code_availability,
+    count_papers,
     count_search_paper_read_states,
+    count_unchecked_code_availability,
     count_unanalyzed_papers,
     create_chat_session,
     create_or_link_github_user,
@@ -283,11 +286,15 @@ async def apply_background_analysis_runtime_config(
 
 async def build_background_tasks_payload() -> dict:
     try:
+        total_paper_count = await asyncio.to_thread(count_papers)
         unanalyzed_count = await asyncio.to_thread(count_unanalyzed_papers)
+        pending_code_count = await asyncio.to_thread(count_pending_code_availability)
+        unchecked_code_count = await asyncio.to_thread(count_unchecked_code_availability)
     except DatabaseError:
         raise
 
     analyzer_state = background_analyzer.status_snapshot()
+    analysis_status = paper_analysis_status()
     return {
         "generated_at": datetime.now(timezone.utc),
         "llm_configured": llm.is_configured(),
@@ -296,13 +303,38 @@ async def build_background_tasks_payload() -> dict:
                 "id": "paper_analysis",
                 "name": "论文后台分析",
                 "owner": "admin",
-                "status": paper_analysis_status(),
+                "status": analysis_status,
                 "enabled": background_analysis_enabled,
                 "manageable": True,
                 "description": "定期扫描未分析论文并写入 LLM 分析结果",
                 "metadata": {
                     **analyzer_state,
+                    "total_paper_count": total_paper_count,
                     "unanalyzed_count": unanalyzed_count,
+                    "pending_code_availability_count": pending_code_count,
+                    "unchecked_code_availability_count": unchecked_code_count,
+                },
+            },
+            {
+                "id": "code_availability",
+                "name": "代码开源状态判断",
+                "owner": "admin",
+                "status": analysis_status,
+                "enabled": background_analysis_enabled,
+                "manageable": False,
+                "description": "基于 LLM 分析结果判断论文代码是否开源",
+                "metadata": {
+                    "total_paper_count": total_paper_count,
+                    "pending_code_availability_count": pending_code_count,
+                    "unchecked_code_availability_count": unchecked_code_count,
+                    "check_interval_seconds": background_analyzer.check_interval,
+                    "last_run_success_count": analyzer_state.get("last_run_code_success_count", 0),
+                    "last_run_failed_count": analyzer_state.get("last_run_code_failed_count", 0),
+                    "current_paper_id": analyzer_state.get("current_code_paper_id"),
+                    "last_checked_paper_id": analyzer_state.get("last_code_checked_paper_id"),
+                    "last_run_started_at": analyzer_state.get("last_run_started_at"),
+                    "last_run_finished_at": analyzer_state.get("last_run_finished_at"),
+                    "depends_on_task_id": "paper_analysis",
                 },
             },
             {
@@ -744,6 +776,15 @@ def validate_read_status(read_status: str) -> str:
     if read_status not in {"all", "unread", "read"}:
         raise HTTPException(status_code=400, detail="read_status must be all, unread, or read")
     return read_status
+
+
+def validate_code_filter(code_status: str) -> str:
+    if code_status not in {"all", "open_source", "not_open_source"}:
+        raise HTTPException(
+            status_code=400,
+            detail="code_status must be all, open_source, or not_open_source",
+        )
+    return code_status
 
 
 def require_user_for_read_filter(read_status: str, user: dict | None) -> None:
@@ -1702,6 +1743,9 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
             normalized_response = normalize_llm_markdown(paper_info["llm_response"], analysis_mode=True)
             if normalized_response != paper_info["llm_response"]:
                 await asyncio.to_thread(update_llm_response, paper_id, normalized_response)
+                paper_info["llm_response"] = normalized_response
+            if not paper_info.get("code_checked_at"):
+                await background_analyzer.update_code_availability(paper_info, normalized_response)
             yield {"data": normalized_response}
             yield {"event": "done", "data": ""}
             return
@@ -1739,6 +1783,8 @@ async def get_paper_analysis(paper_id: str, reanalyze: bool = False):
 
         normalized_response = normalize_llm_markdown("".join(full_response), analysis_mode=True)
         await asyncio.to_thread(update_llm_response, paper_id, normalized_response)
+        paper_info["llm_response"] = normalized_response
+        await background_analyzer.update_code_availability(paper_info, normalized_response)
         yield {"event": "done", "data": ""}
 
     return EventSourceResponse(generate())
@@ -1950,6 +1996,7 @@ async def get_conference_papers_endpoint(
     search_abstract: bool = True,
     search_keywords: bool = True,
     read_status: str = "all",
+    code_status: str = "all",
 ):
     venue_map = {
         "neurips_2025": "NeurIPS 2025",
@@ -1963,6 +2010,7 @@ async def get_conference_papers_endpoint(
         raise HTTPException(status_code=404, detail="Conference not found")
 
     validated_read_status = validate_read_status(read_status)
+    validated_code_filter = validate_code_filter(code_status)
     user = get_current_user_optional(request)
     require_user_for_read_filter(validated_read_status, user)
     user_id = user["id"] if user else None
@@ -1974,6 +2022,7 @@ async def get_conference_papers_endpoint(
             search_title, search_abstract, search_keywords,
             user_id=user_id,
             read_status=validated_read_status,
+            code_filter=validated_code_filter,
         )
         read_counts = (
             count_search_paper_read_states(
@@ -1983,6 +2032,7 @@ async def get_conference_papers_endpoint(
                 search_abstract,
                 search_keywords,
                 user_id,
+                code_filter=validated_code_filter,
             )
             if user_id
             else None
@@ -2009,8 +2059,10 @@ async def get_hf_daily_papers_endpoint(
     search_abstract: bool = True,
     search_keywords: bool = True,
     read_status: str = "all",
+    code_status: str = "all",
 ):
     validated_read_status = validate_read_status(read_status)
+    validated_code_filter = validate_code_filter(code_status)
     user = get_current_user_optional(request)
     require_user_for_read_filter(validated_read_status, user)
     user_id = user["id"] if user else None
@@ -2027,6 +2079,7 @@ async def get_hf_daily_papers_endpoint(
             search_keywords,
             user_id=user_id,
             read_status=validated_read_status,
+            code_filter=validated_code_filter,
         )
         read_counts = (
             count_hf_daily_paper_read_states(
@@ -2035,6 +2088,7 @@ async def get_hf_daily_papers_endpoint(
                 search_abstract,
                 search_keywords,
                 user_id,
+                code_filter=validated_code_filter,
             )
             if user_id
             else None
@@ -2061,8 +2115,10 @@ async def get_arxiv_papers_endpoint(
     search_abstract: bool = True,
     search_keywords: bool = True,
     read_status: str = "all",
+    code_status: str = "all",
 ):
     validated_read_status = validate_read_status(read_status)
+    validated_code_filter = validate_code_filter(code_status)
     user = get_current_user_optional(request)
     require_user_for_read_filter(validated_read_status, user)
     user_id = user["id"] if user else None
@@ -2080,6 +2136,7 @@ async def get_arxiv_papers_endpoint(
             search_keywords=search_keywords,
             user_id=user_id,
             read_status=validated_read_status,
+            code_filter=validated_code_filter,
         )
         read_counts = (
             count_arxiv_paper_read_states(
@@ -2089,6 +2146,7 @@ async def get_arxiv_papers_endpoint(
                 search_abstract,
                 search_keywords,
                 user_id,
+                code_filter=validated_code_filter,
             )
             if user_id
             else None
@@ -2115,8 +2173,10 @@ async def search_all_papers_endpoint(
     search_abstract: bool = True,
     search_keywords: bool = True,
     read_status: str = "all",
+    code_status: str = "all",
 ):
     validated_read_status = validate_read_status(read_status)
+    validated_code_filter = validate_code_filter(code_status)
     user = get_current_user_optional(request)
     require_user_for_read_filter(validated_read_status, user)
     user_id = user["id"] if user else None
@@ -2128,6 +2188,7 @@ async def search_all_papers_endpoint(
             search_title, search_abstract, search_keywords,
             user_id=user_id,
             read_status=validated_read_status,
+            code_filter=validated_code_filter,
         )
         read_counts = (
             count_search_paper_read_states(
@@ -2137,6 +2198,7 @@ async def search_all_papers_endpoint(
                 search_abstract,
                 search_keywords,
                 user_id,
+                code_filter=validated_code_filter,
             )
             if user_id
             else None

@@ -11,15 +11,17 @@ import { extractArxivId } from '@/lib/arxiv';
 import { useAuth } from '@/lib/auth';
 import {
   applyFilters,
+  applyCodeFilter,
   applyReadFilter,
   buildQueryString,
   navigate,
+  parseCodeFilter,
   parseFilters,
   parsePage,
   parseReadFilter,
   useAppLocation,
 } from '@/lib/router';
-import type { Paper, PaperListResponse, PaperReadFilter, SearchFilters } from '@/types';
+import type { Paper, PaperCodeFilter, PaperListResponse, PaperReadFilter, SearchFilters } from '@/types';
 
 const EMPTY_RESULTS: PaperListResponse = {
   papers: [],
@@ -190,13 +192,14 @@ export function ArxivPage() {
   const location = useAppLocation();
   const { user, isLoading: isAuthLoading } = useAuth();
   const listRef = useRef<HTMLDivElement | null>(null);
-  const { query, page, filters, readFilter } = useMemo(() => {
+  const { query, page, filters, readFilter, codeFilter } = useMemo(() => {
     const params = new URLSearchParams(location.search);
     return {
       query: params.get('q') ?? '',
       page: parsePage(params.get('page')),
       filters: parseFilters(params),
       readFilter: parseReadFilter(params.get('read')),
+      codeFilter: parseCodeFilter(params.get('code')),
     };
   }, [location.search]);
 
@@ -226,7 +229,7 @@ export function ArxivPage() {
     setError(null);
     const effectiveReadFilter = user ? readFilter : 'all';
 
-    void fetchArxivPapers(page, query, filters, 8, effectiveReadFilter)
+    void fetchArxivPapers(page, query, filters, 8, effectiveReadFilter, codeFilter)
       .then((payload) => {
         if (active) {
           setResults(payload);
@@ -247,7 +250,7 @@ export function ArxivPage() {
     return () => {
       active = false;
     };
-  }, [isAuthLoading, page, query, filters, readFilter, refreshVersion, user]);
+  }, [codeFilter, isAuthLoading, page, query, filters, readFilter, refreshVersion, user]);
 
   useEffect(() => {
     setActiveDate(timelineItems[0]?.date ?? null);
@@ -337,12 +340,20 @@ export function ArxivPage() {
       applyFilters(next, draftFilters);
     }
     applyReadFilter(next, user ? readFilter : 'all');
+    applyCodeFilter(next, codeFilter);
     navigate(`/arxiv${buildQueryString(next)}`);
   };
 
   const onReadFilterChange = (nextReadFilter: PaperReadFilter) => {
     const next = new URLSearchParams(location.search);
     applyReadFilter(next, nextReadFilter);
+    next.delete('page');
+    navigate(`/arxiv${buildQueryString(next)}`);
+  };
+
+  const onCodeFilterChange = (nextCodeFilter: PaperCodeFilter) => {
+    const next = new URLSearchParams(location.search);
+    applyCodeFilter(next, nextCodeFilter);
     next.delete('page');
     navigate(`/arxiv${buildQueryString(next)}`);
   };
@@ -415,8 +426,10 @@ export function ArxivPage() {
             <PaperReadFilterBar
               value={activeReadFilter}
               counts={results.read_counts}
+              codeValue={codeFilter}
               disabled={!user || isAuthLoading}
               onChange={onReadFilterChange}
+              onCodeChange={onCodeFilterChange}
             />
           </div>
 

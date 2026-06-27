@@ -20,6 +20,7 @@ import type {
   MyPaperSort,
   OnlineCount,
   Paper,
+  PaperCodeFilter,
   PaperReadFilter,
   PaperMark,
   PaperListResponse,
@@ -62,6 +63,7 @@ function buildSearchRequestParams(
   query: string,
   filters: SearchFilters,
   readFilter: PaperReadFilter = 'all',
+  codeFilter: PaperCodeFilter = 'all',
 ): URLSearchParams {
   const params = new URLSearchParams({
     page: String(page),
@@ -76,6 +78,9 @@ function buildSearchRequestParams(
   }
   if (readFilter !== 'all') {
     params.set('read_status', readFilter);
+  }
+  if (codeFilter !== 'all') {
+    params.set('code_status', codeFilter);
   }
 
   return params;
@@ -123,8 +128,9 @@ export async function fetchConferencePapers(
   query: string,
   filters: SearchFilters,
   readFilter: PaperReadFilter = 'all',
+  codeFilter: PaperCodeFilter = 'all',
 ): Promise<PaperListResponse> {
-  const params = buildSearchRequestParams(page, query, filters, readFilter);
+  const params = buildSearchRequestParams(page, query, filters, readFilter, codeFilter);
   return apiFetch<PaperListResponse>(`/conference/${venue}/papers?${params.toString()}`);
 }
 
@@ -133,8 +139,9 @@ export async function fetchSearchPapers(
   query: string,
   filters: SearchFilters,
   readFilter: PaperReadFilter = 'all',
+  codeFilter: PaperCodeFilter = 'all',
 ): Promise<PaperListResponse> {
-  const params = buildSearchRequestParams(page, query, filters, readFilter);
+  const params = buildSearchRequestParams(page, query, filters, readFilter, codeFilter);
   return apiFetch<PaperListResponse>(`/search/papers?${params.toString()}`);
 }
 
@@ -143,8 +150,9 @@ export async function fetchHfDailyPapers(
   query: string,
   filters: SearchFilters,
   readFilter: PaperReadFilter = 'all',
+  codeFilter: PaperCodeFilter = 'all',
 ): Promise<PaperListResponse> {
-  const params = buildSearchRequestParams(page, query, filters, readFilter);
+  const params = buildSearchRequestParams(page, query, filters, readFilter, codeFilter);
   return apiFetch<PaperListResponse>(`/hf-daily-papers?${params.toString()}`);
 }
 
@@ -168,8 +176,9 @@ export async function fetchArxivPapers(
   filters: SearchFilters = DEFAULT_SEARCH_FILTERS,
   limit = 8,
   readFilter: PaperReadFilter = 'all',
+  codeFilter: PaperCodeFilter = 'all',
 ): Promise<PaperListResponse> {
-  const params = buildSearchRequestParams(page, query, filters, readFilter);
+  const params = buildSearchRequestParams(page, query, filters, readFilter, codeFilter);
   params.set('limit', String(limit));
   return apiFetch<PaperListResponse>(`/arxiv-papers?${params.toString()}`);
 }

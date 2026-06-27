@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import type { PaperReadFilter, SearchFilters } from '@/types';
+import type { PaperCodeFilter, PaperReadFilter, SearchFilters } from '@/types';
 
 export interface AppLocation {
   pathname: string;
@@ -67,6 +67,19 @@ export function applyReadFilter(params: URLSearchParams, readFilter: PaperReadFi
     params.delete('read');
   } else {
     params.set('read', readFilter);
+  }
+  return params;
+}
+
+export function parseCodeFilter(value: string | null): PaperCodeFilter {
+  return value === 'open_source' || value === 'not_open_source' ? value : 'all';
+}
+
+export function applyCodeFilter(params: URLSearchParams, codeFilter: PaperCodeFilter): URLSearchParams {
+  if (codeFilter === 'all') {
+    params.delete('code');
+  } else {
+    params.set('code', codeFilter);
   }
   return params;
 }

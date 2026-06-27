@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { ActiveModelBadge } from '@/components/active-model-badge';
 import { ChatPanel } from '@/components/chat-panel';
+import { CodeAvailabilityBadge } from '@/components/code-availability-badge';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -207,6 +208,9 @@ export function PaperPage({ paperId }: PaperPageProps) {
               setAnalysisStreaming(false);
               setAnalysisReasoning('');
               setAnalysisStatus('');
+              void fetchPaperInfo(paperId).then(setPaper).catch(() => {
+                // The analysis result is already available; keep the existing metadata if refresh fails.
+              });
             }
           },
         },
@@ -331,6 +335,11 @@ export function PaperPage({ paperId }: PaperPageProps) {
                         {paper.primary_area}
                       </Badge>
                     ) : null}
+                    <CodeAvailabilityBadge
+                      status={paper.code_status}
+                      codeUrl={paper.code_url}
+                      className="px-3 py-1 text-sm"
+                    />
                     {keywords.slice(0, 6).map((keyword, index) => {
                       const className =
                         index % 2 === 0

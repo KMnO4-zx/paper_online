@@ -2,6 +2,7 @@ import { Bookmark, CalendarDays, Eye, Heart, Star, ThumbsUp } from 'lucide-react
 import { useEffect, useMemo, useState } from 'react';
 
 import { HighlightedText } from '@/components/search-highlight';
+import { CodeAvailabilityBadge } from '@/components/code-availability-badge';
 import { RichContent } from '@/components/rich-content';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -138,6 +139,7 @@ export function PaperCard({
             {paper.primary_area}
           </Badge>
         ) : null}
+        <CodeAvailabilityBadge status={paper.code_status} codeUrl={paper.code_url} />
         {isHfDaily && typeof paper.hf_daily?.upvotes === 'number' ? (
           <Badge variant="outline" className="border-[#fed7aa] bg-[#fff7ed] text-[#c2410c]">
             <ThumbsUp className="mr-1 h-3 w-3" />

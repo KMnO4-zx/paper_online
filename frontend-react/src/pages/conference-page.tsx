@@ -9,8 +9,8 @@ import { SearchControls } from '@/components/search-controls';
 import { fetchConferencePapers } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
 import { getConferenceDefinition } from '@/lib/constants';
-import { applyReadFilter, buildQueryString, navigate, parseFilters, parsePage, parseReadFilter, useAppLocation } from '@/lib/router';
-import type { PaperListResponse, PaperReadFilter, SearchFilters } from '@/types';
+import { applyCodeFilter, applyReadFilter, buildQueryString, navigate, parseCodeFilter, parseFilters, parsePage, parseReadFilter, useAppLocation } from '@/lib/router';
+import type { PaperCodeFilter, PaperListResponse, PaperReadFilter, SearchFilters } from '@/types';
 
 interface ConferencePageProps {
   venue: string;
@@ -26,13 +26,14 @@ const EMPTY_RESULTS: PaperListResponse = {
 export function ConferencePage({ venue }: ConferencePageProps) {
   const location = useAppLocation();
   const { user, isLoading: isAuthLoading } = useAuth();
-  const { query, page, filters, readFilter } = useMemo(() => {
+  const { query, page, filters, readFilter, codeFilter } = useMemo(() => {
     const params = new URLSearchParams(location.search);
     return {
       query: params.get('q') ?? '',
       page: parsePage(params.get('page')),
       filters: parseFilters(params),
       readFilter: parseReadFilter(params.get('read')),
+      codeFilter: parseCodeFilter(params.get('code')),
     };
   }, [location.search]);
   const conference = getConferenceDefinition(venue);
@@ -61,7 +62,7 @@ export function ConferencePage({ venue }: ConferencePageProps) {
     setError(null);
     const effectiveReadFilter = user ? readFilter : 'all';
 
-    void fetchConferencePapers(venue, page, query, filters, effectiveReadFilter)
+    void fetchConferencePapers(venue, page, query, filters, effectiveReadFilter, codeFilter)
       .then((payload) => {
         if (active) {
           setResults(payload);
@@ -82,7 +83,7 @@ export function ConferencePage({ venue }: ConferencePageProps) {
     return () => {
       active = false;
     };
-  }, [conference, isAuthLoading, venue, page, query, filters, readFilter, refreshVersion, user]);
+  }, [codeFilter, conference, isAuthLoading, venue, page, query, filters, readFilter, refreshVersion, user]);
 
   const submitSearch = () => {
     const next = new URLSearchParams();
@@ -93,6 +94,7 @@ export function ConferencePage({ venue }: ConferencePageProps) {
       next.set('keywords', String(draftFilters.keywords));
     }
     applyReadFilter(next, user ? readFilter : 'all');
+    applyCodeFilter(next, codeFilter);
     navigate(`/conference/${venue}${buildQueryString(next)}`);
   };
 
@@ -105,6 +107,13 @@ export function ConferencePage({ venue }: ConferencePageProps) {
   const onReadFilterChange = (nextReadFilter: PaperReadFilter) => {
     const next = new URLSearchParams(location.search);
     applyReadFilter(next, nextReadFilter);
+    next.delete('page');
+    navigate(`/conference/${venue}${buildQueryString(next)}`);
+  };
+
+  const onCodeFilterChange = (nextCodeFilter: PaperCodeFilter) => {
+    const next = new URLSearchParams(location.search);
+    applyCodeFilter(next, nextCodeFilter);
     next.delete('page');
     navigate(`/conference/${venue}${buildQueryString(next)}`);
   };
@@ -155,8 +164,10 @@ export function ConferencePage({ venue }: ConferencePageProps) {
         <PaperReadFilterBar
           value={activeReadFilter}
           counts={results.read_counts}
+          codeValue={codeFilter}
           disabled={!user || isAuthLoading}
           onChange={onReadFilterChange}
+          onCodeChange={onCodeFilterChange}
         />
       </div>
 

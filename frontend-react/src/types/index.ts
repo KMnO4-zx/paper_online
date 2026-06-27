@@ -12,6 +12,10 @@ export interface Paper {
   llm_response?: string | null;
   created_at?: string;
   sort_order?: number | null;
+  code_status?: PaperCodeStatus | null;
+  code_url?: string | null;
+  code_evidence?: string | null;
+  code_checked_at?: string | null;
   hf_daily?: HfDailyPaperMeta | null;
   arxiv?: ArxivPaperMeta | null;
   openReviewUrl?: string;
@@ -20,6 +24,8 @@ export interface Paper {
   isLiked?: boolean;
   isFavorited?: boolean;
 }
+
+export type PaperCodeStatus = 'open_source' | 'unavailable' | 'not_found' | 'unknown';
 
 export interface HfDailyPaperMeta {
   daily_date?: string | null;
@@ -73,6 +79,8 @@ export interface SearchFilters {
 }
 
 export type PaperReadFilter = 'all' | 'unread' | 'read';
+
+export type PaperCodeFilter = 'all' | 'open_source' | 'not_open_source';
 
 export interface PaperReadCounts {
   all: number;

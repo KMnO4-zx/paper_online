@@ -1,9 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   Activity,
   ArrowDown,
   ArrowUp,
   Brain,
+  ChevronLeft,
+  ChevronRight,
   Clock3,
   KeyRound,
   ListChecks,
@@ -94,6 +96,29 @@ function formatTrendTick(value: string, range: '24h' | '7d') {
 
 const tokenFormatter = new Intl.NumberFormat('en-US');
 const TOKEN_DETAIL_PAGE_SIZE = 7;
+const ADMIN_TASK_DECK_STORAGE_KEY = 'paper_admin_active_background_task_id';
+
+function readStoredAdminTaskId() {
+  if (typeof window === 'undefined') {
+    return null;
+  }
+  try {
+    return window.localStorage.getItem(ADMIN_TASK_DECK_STORAGE_KEY);
+  } catch {
+    return null;
+  }
+}
+
+function writeStoredAdminTaskId(taskId: string) {
+  if (typeof window === 'undefined') {
+    return;
+  }
+  try {
+    window.localStorage.setItem(ADMIN_TASK_DECK_STORAGE_KEY, taskId);
+  } catch {
+    // Ignore storage failures; the deck should still work in memory.
+  }
+}
 
 function formatTokenCount(value: number | null | undefined) {
   return tokenFormatter.format(value ?? 0);
@@ -261,6 +286,7 @@ export function AdminPage() {
   const [backgroundTasks, setBackgroundTasks] = useState<AdminBackgroundTasksResponse | null>(null);
   const [paperAnalysisEnabled, setPaperAnalysisEnabled] = useState(false);
   const [paperAnalysisIntervalMinutes, setPaperAnalysisIntervalMinutes] = useState('');
+  const [activeAdminTaskIndex, setActiveAdminTaskIndex] = useState(0);
   const [users, setUsers] = useState<AdminUserListResponse | null>(null);
   const [llmProviders, setLlmProviders] = useState<AdminLlmProvider[]>([]);
   const [selectedLlmProviderId, setSelectedLlmProviderId] = useState<string | null>(null);
@@ -419,8 +445,22 @@ export function AdminPage() {
       active_model: selectedProvider.active_model ?? selectedProvider.models[0]?.model_name ?? '',
     })
     : null;
-  const paperAnalysisTask = backgroundTasks?.tasks.find((task) => task.id === 'paper_analysis') ?? null;
-  const systemTasks = backgroundTasks?.tasks.filter((task) => task.owner === 'system') ?? [];
+  const paperAnalysisTask = useMemo(
+    () => backgroundTasks?.tasks.find((task) => task.id === 'paper_analysis') ?? null,
+    [backgroundTasks],
+  );
+  const adminTasks = useMemo(
+    () => backgroundTasks?.tasks.filter((task) => task.owner === 'admin') ?? [],
+    [backgroundTasks],
+  );
+  const systemTasks = useMemo(
+    () => backgroundTasks?.tasks.filter((task) => task.owner === 'system') ?? [],
+    [backgroundTasks],
+  );
+  const paperLibraryTotal = metadataNumber(paperAnalysisTask, 'total_paper_count')
+    ?? metadataNumber(adminTasks.find((task) => task.id === 'code_availability'), 'total_paper_count')
+    ?? 0;
+  const activeAdminTask = adminTasks[activeAdminTaskIndex] ?? adminTasks[0] ?? null;
   const trendData = metrics?.trend ?? [];
   const selectedTokenUsage = tokenUsageRange === 'weekly' ? tokenUsage?.weekly : tokenUsage?.monthly;
   const tokenDailyTotals = selectedTokenUsage?.daily_totals ?? [];
@@ -437,6 +477,27 @@ export function AdminPage() {
   useEffect(() => {
     setTokenDetailPage((current) => Math.min(current, tokenDetailPages));
   }, [tokenDetailPages]);
+
+  useEffect(() => {
+    setActiveAdminTaskIndex((current) => {
+      if (adminTasks.length === 0) {
+        return 0;
+      }
+      const storedTaskId = readStoredAdminTaskId();
+      const storedIndex = storedTaskId
+        ? adminTasks.findIndex((task) => task.id === storedTaskId)
+        : -1;
+      if (storedIndex >= 0) {
+        return storedIndex;
+      }
+      const nextIndex = Math.min(current, adminTasks.length - 1);
+      const nextTask = adminTasks[nextIndex];
+      if (nextTask) {
+        writeStoredAdminTaskId(nextTask.id);
+      }
+      return nextIndex;
+    });
+  }, [adminTasks]);
 
   if (isLoading) {
     return (
@@ -662,6 +723,27 @@ export function AdminPage() {
     }
   };
 
+  const selectAdminTaskIndex = (nextIndex: number) => {
+    if (adminTasks.length === 0) {
+      setActiveAdminTaskIndex(0);
+      return;
+    }
+    const normalizedIndex = (nextIndex + adminTasks.length) % adminTasks.length;
+    const nextTask = adminTasks[normalizedIndex];
+    setActiveAdminTaskIndex(normalizedIndex);
+    if (nextTask) {
+      writeStoredAdminTaskId(nextTask.id);
+    }
+  };
+
+  const showPreviousAdminTask = () => {
+    selectAdminTaskIndex(activeAdminTaskIndex - 1);
+  };
+
+  const showNextAdminTask = () => {
+    selectAdminTaskIndex(activeAdminTaskIndex + 1);
+  };
+
   return (
     <div className="mx-auto max-w-7xl animate-fade-in space-y-6">
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
@@ -702,94 +784,241 @@ export function AdminPage() {
         </div>
 
         <div className="grid items-stretch gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(320px,0.8fr)]">
-          <div className="h-full rounded-[24px] border border-[#e5eaf2] bg-[#f8fafc] p-3.5">
-            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0 rounded-[24px] border border-[#e5eaf2] bg-[#f8fafc] p-3.5">
+            <div className="mb-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-lg font-semibold text-[#172033]">论文后台分析</h3>
-                  <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${taskStatusClass(paperAnalysisTask?.status ?? 'disabled')}`}>
-                    {taskStatusLabel(paperAnalysisTask?.status ?? 'disabled')}
-                  </span>
-                </div>
-                <p className="mt-1 text-sm text-[#728095]">{paperAnalysisTask?.description ?? '定期扫描未分析论文并写入 LLM 分析结果'}</p>
+                <h3 className="text-sm font-semibold text-[#172033]">管理员任务</h3>
+                <p className="mt-0.5 text-xs text-[#728095]">{adminTasks.length} 个任务</p>
               </div>
-              <label className="inline-flex items-center gap-2 rounded-full bg-white px-3 py-2 text-sm font-medium text-[#475569] ring-1 ring-[#e5eaf2]">
-                <input
-                  type="checkbox"
-                  checked={paperAnalysisEnabled}
-                  onChange={(event) => setPaperAnalysisEnabled(event.target.checked)}
-                  className="h-4 w-4 rounded border-[#cbd5e1] text-[#2563eb]"
-                />
-                启用
-              </label>
+              <span className="w-fit rounded-full bg-white px-3 py-1 text-xs font-medium text-[#475569] ring-1 ring-[#e5eaf2]">
+                论文库 {formatTokenCount(paperLibraryTotal)} 篇
+              </span>
             </div>
 
-            <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
-              <div className="rounded-2xl bg-white px-3.5 py-2.5 ring-1 ring-[#e5eaf2]">
-                <div className="text-xs font-medium text-[#728095]">待分析论文</div>
-                <div className="mt-1.5 text-2xl font-semibold text-[#172033]">
-                  {formatTokenCount(metadataNumber(paperAnalysisTask, 'unanalyzed_count') ?? 0)}
-                </div>
+            {!activeAdminTask ? (
+              <div className="rounded-2xl border border-dashed border-[#dbe3ee] px-4 py-6 text-sm text-[#728095]">
+                暂无管理员任务状态
               </div>
-              <div className="rounded-2xl bg-white px-3.5 py-2.5 ring-1 ring-[#e5eaf2]">
-                <div className="text-xs font-medium text-[#728095]">当前间隔</div>
-                <div className="mt-1.5 text-2xl font-semibold text-[#172033]">
-                  {formatDuration(metadataNumber(paperAnalysisTask, 'check_interval_seconds'))}
-                </div>
-              </div>
-              <div className="rounded-2xl bg-white px-3.5 py-2.5 ring-1 ring-[#e5eaf2]">
-                <div className="text-xs font-medium text-[#728095]">上一轮结果</div>
-                <div className="mt-1.5 text-sm font-semibold text-[#172033]">
-                  成功 {metadataNumber(paperAnalysisTask, 'last_run_success_count') ?? 0}
-                  <span className="mx-1 text-[#cbd5e1]">/</span>
-                  失败 {metadataNumber(paperAnalysisTask, 'last_run_failed_count') ?? 0}
-                </div>
-              </div>
-            </div>
+            ) : (
+              <div className="relative min-h-[27rem] overflow-hidden rounded-[24px] bg-[#f8fafc] p-2 sm:min-h-[25rem]">
+                {adminTasks.map((task, index) => {
+                  const relativeIndex = (index - activeAdminTaskIndex + adminTasks.length) % adminTasks.length;
+                  const isActiveTask = relativeIndex === 0;
+                  const isHiddenTask = relativeIndex > 2;
+                  const isPaperAnalysisTask = task.id === 'paper_analysis';
+                  const isCodeAvailabilityTask = task.id === 'code_availability';
+                  const totalCount = metadataNumber(task, 'total_paper_count') ?? paperLibraryTotal;
+                  const pendingCount = isCodeAvailabilityTask
+                    ? metadataNumber(task, 'unchecked_code_availability_count') ?? metadataNumber(task, 'pending_code_availability_count')
+                    : metadataNumber(task, 'unanalyzed_count');
+                  const pendingLabel = isCodeAvailabilityTask ? '待判断代码' : '待分析论文';
+                  const currentLabel = isCodeAvailabilityTask ? '当前判断' : '当前处理';
+                  const latestLabel = isCodeAvailabilityTask ? '最近判断' : '最近分析';
+                  const latestPaperId = isCodeAvailabilityTask
+                    ? metadataString(task, 'last_checked_paper_id')
+                    : metadataString(task, 'last_analyzed_paper_id');
+                  const lastRunStartedAt = metadataString(task, 'last_run_started_at');
+                  const lastRunFinishedAt = metadataString(task, 'last_run_finished_at');
+                  const transformByDepth = [
+                    'translate3d(0, 0, 0) scale(1) rotate(0deg)',
+                    'translate3d(46px, 18px, 0) scale(0.96) rotate(1deg)',
+                    'translate3d(78px, 36px, 0) scale(0.92) rotate(2deg)',
+                  ];
+                  const deckTransform = transformByDepth[Math.min(relativeIndex, 2)];
+                  const deckOpacity = isHiddenTask ? 0 : 1 - relativeIndex * 0.12;
 
-            <div className="mt-3 grid gap-2.5 lg:grid-cols-[minmax(0,1fr)_auto]">
-              <label className="space-y-1.5">
-                <span className="text-sm font-medium text-[#475569]">检查间隔（分钟）</span>
-                <div className="flex items-center gap-2">
-                  <Clock3 className="h-4 w-4 shrink-0 text-[#94a3b8]" />
-                  <Input
-                    type="number"
-                    min={1}
-                    step={1}
-                    value={paperAnalysisIntervalMinutes}
-                    onChange={(event) => setPaperAnalysisIntervalMinutes(event.target.value)}
-                    className="h-10 rounded-2xl bg-white"
-                  />
-                </div>
-              </label>
-              <div className="flex items-end">
-                <Button
-                  className="h-10 rounded-2xl bg-[#2563eb] text-white hover:bg-[#1d4ed8]"
-                  onClick={() => void savePaperAnalysisTask()}
-                  disabled={isUpdatingPaperAnalysis}
-                >
-                  {isUpdatingPaperAnalysis ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
-                  保存任务配置
-                </Button>
-              </div>
-            </div>
+                  return (
+                    <div
+                      key={task.id}
+                      className={`absolute left-2 right-2 top-2 rounded-[22px] border border-[#e5eaf2] bg-white p-3.5 transition-[transform,opacity,box-shadow,border-color] duration-500 ease-out sm:right-8 lg:right-20 ${
+                        isActiveTask
+                          ? 'shadow-[0_18px_42px_rgba(15,23,42,0.08)]'
+                          : 'cursor-pointer shadow-sm hover:border-[#cbd5e1] hover:shadow-[0_14px_30px_rgba(15,23,42,0.08)] [&_*]:pointer-events-none'
+                      }`}
+                      style={{
+                        transform: deckTransform,
+                        opacity: deckOpacity,
+                        zIndex: 30 - relativeIndex,
+                        pointerEvents: isHiddenTask ? 'none' : 'auto',
+                        transformOrigin: 'right center',
+                      }}
+                      aria-hidden={isHiddenTask}
+                      onClick={() => {
+                        if (!isActiveTask) {
+                          selectAdminTaskIndex(index);
+                        }
+                      }}
+                    >
+                      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <h3 className="text-lg font-semibold text-[#172033]">{task.name}</h3>
+                            <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${taskStatusClass(task.status)}`}>
+                              {taskStatusLabel(task.status)}
+                            </span>
+                          </div>
+                          <p className="mt-1 line-clamp-2 text-sm text-[#728095]">{task.description}</p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <div className="hidden rounded-full bg-[#f8fafc] px-2.5 py-1 text-xs font-medium text-[#64748b] ring-1 ring-[#e5eaf2] sm:block">
+                            {index + 1}/{adminTasks.length}
+                          </div>
+                          {isPaperAnalysisTask ? (
+                            <label className="inline-flex items-center gap-2 rounded-full bg-[#f8fafc] px-3 py-2 text-sm font-medium text-[#475569] ring-1 ring-[#e5eaf2]">
+                              <input
+                                type="checkbox"
+                                checked={paperAnalysisEnabled}
+                                onChange={(event) => setPaperAnalysisEnabled(event.target.checked)}
+                                className="h-4 w-4 rounded border-[#cbd5e1] text-[#2563eb]"
+                              />
+                              启用
+                            </label>
+                          ) : (
+                            <span className="w-fit rounded-full bg-[#f8fafc] px-3 py-2 text-sm font-medium text-[#64748b] ring-1 ring-[#e5eaf2]">
+                              跟随调度
+                            </span>
+                          )}
+                        </div>
+                      </div>
 
-            <div className="mt-3 grid min-w-0 gap-1.5 text-xs text-[#728095] sm:grid-cols-2">
-              <div className="min-w-0 truncate">当前处理：{metadataString(paperAnalysisTask, 'current_paper_id') ?? '-'}</div>
-              <div className="min-w-0 truncate" title={metadataString(paperAnalysisTask, 'last_analyzed_paper_id') ?? undefined}>
-                最近分析：{metadataString(paperAnalysisTask, 'last_analyzed_paper_id') ?? '-'}
+                      <div className="mt-3 grid gap-2.5 sm:grid-cols-3">
+                        <div className="rounded-2xl bg-[#f8fafc] px-3.5 py-2.5 ring-1 ring-[#e5eaf2]">
+                          <div className="text-xs font-medium text-[#728095]">论文总数</div>
+                          <div className="mt-1.5 text-2xl font-semibold text-[#172033]">
+                            {formatTokenCount(totalCount)}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl bg-[#f8fafc] px-3.5 py-2.5 ring-1 ring-[#e5eaf2]">
+                          <div className="text-xs font-medium text-[#728095]">{pendingLabel}</div>
+                          <div className="mt-1.5 text-2xl font-semibold text-[#172033]">
+                            {formatTokenCount(pendingCount ?? 0)}
+                          </div>
+                        </div>
+                        <div className="rounded-2xl bg-[#f8fafc] px-3.5 py-2.5 ring-1 ring-[#e5eaf2]">
+                          <div className="text-xs font-medium text-[#728095]">上一轮结果</div>
+                          <div className="mt-1.5 text-sm font-semibold text-[#172033]">
+                            成功 {metadataNumber(task, 'last_run_success_count') ?? 0}
+                            <span className="mx-1 text-[#cbd5e1]">/</span>
+                            失败 {metadataNumber(task, 'last_run_failed_count') ?? 0}
+                          </div>
+                        </div>
+                      </div>
+
+                      {isPaperAnalysisTask ? (
+                        <div className="mt-3 grid gap-2.5 lg:grid-cols-[minmax(0,1fr)_auto]">
+                          <label className="space-y-1.5">
+                            <span className="text-sm font-medium text-[#475569]">检查间隔（分钟）</span>
+                            <div className="flex items-center gap-2">
+                              <Clock3 className="h-4 w-4 shrink-0 text-[#94a3b8]" />
+                              <Input
+                                type="number"
+                                min={1}
+                                step={1}
+                                value={paperAnalysisIntervalMinutes}
+                                onChange={(event) => setPaperAnalysisIntervalMinutes(event.target.value)}
+                                className="h-10 rounded-2xl bg-[#f8fafc]"
+                              />
+                            </div>
+                          </label>
+                          <div className="flex items-end">
+                            <Button
+                              className="h-10 rounded-2xl bg-[#2563eb] text-white hover:bg-[#1d4ed8]"
+                              onClick={() => void savePaperAnalysisTask()}
+                              disabled={isUpdatingPaperAnalysis}
+                            >
+                              {isUpdatingPaperAnalysis ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Save className="mr-2 h-4 w-4" />}
+                              保存任务配置
+                            </Button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="mt-3 rounded-2xl bg-[#f8fafc] px-3.5 py-3 text-sm text-[#728095] ring-1 ring-[#e5eaf2]">
+                          <span className="font-medium text-[#475569]">当前间隔：</span>
+                          {formatDuration(metadataNumber(task, 'check_interval_seconds'))}
+                        </div>
+                      )}
+
+                      <div className="mt-3 grid min-w-0 gap-1.5 text-xs text-[#728095] sm:grid-cols-2">
+                        <div className="min-w-0 truncate" title={metadataString(task, 'current_paper_id') ?? undefined}>
+                          {currentLabel}：{metadataString(task, 'current_paper_id') ?? '-'}
+                        </div>
+                        <div className="min-w-0 truncate" title={latestPaperId ?? undefined}>
+                          {latestLabel}：{latestPaperId ?? '-'}
+                        </div>
+                        <div className="min-w-0 truncate">
+                          上次开始：{lastRunStartedAt ? new Date(lastRunStartedAt).toLocaleString() : '-'}
+                        </div>
+                        <div className="min-w-0 truncate">
+                          上次结束：{lastRunFinishedAt ? new Date(lastRunFinishedAt).toLocaleString() : '-'}
+                        </div>
+                      </div>
+
+                      {isActiveTask && adminTasks.length > 1 ? (
+                        <div className="mt-4 flex items-center justify-between gap-3 border-t border-[#edf2f7] pt-3">
+                          <div className="flex gap-1.5">
+                            {adminTasks.map((dotTask, dotIndex) => (
+                              <button
+                                key={dotTask.id}
+                                type="button"
+                                className={`h-2.5 rounded-full transition-all ${
+                                  dotIndex === activeAdminTaskIndex ? 'w-6 bg-[#2563eb]' : 'w-2.5 bg-[#cbd5e1] hover:bg-[#94a3b8]'
+                                }`}
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  selectAdminTaskIndex(dotIndex);
+                                }}
+                                aria-label={`切换到${dotTask.name}`}
+                              />
+                            ))}
+                          </div>
+                          <div className="flex gap-2">
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              className="h-9 w-9 rounded-full"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                showPreviousAdminTask();
+                              }}
+                              title="上一张任务卡"
+                            >
+                              <ChevronLeft className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="icon"
+                              className="h-9 w-9 rounded-full"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                showNextAdminTask();
+                              }}
+                              title="下一张任务卡"
+                            >
+                              <ChevronRight className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </div>
+                      ) : null}
+                      {!isActiveTask ? (
+                        <div className="pointer-events-none absolute inset-0 rounded-[22px] bg-white/80 backdrop-blur-[1px]">
+                          <div className="absolute inset-y-0 right-0 flex w-28 flex-col justify-center border-l border-[#edf2f7] bg-white/85 p-3 text-right">
+                            <div className="text-xs font-medium text-[#94a3b8]">下一张</div>
+                            <div className="mt-2 line-clamp-3 text-sm font-semibold leading-5 text-[#172033]">
+                              {task.name}
+                            </div>
+                            <span className={`mt-3 inline-flex self-end rounded-full border px-2 py-0.5 text-xs font-medium ${taskStatusClass(task.status)}`}>
+                              {taskStatusLabel(task.status)}
+                            </span>
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  );
+                })}
               </div>
-              <div className="min-w-0 truncate">
-                上次开始：{metadataString(paperAnalysisTask, 'last_run_started_at')
-                  ? new Date(metadataString(paperAnalysisTask, 'last_run_started_at') as string).toLocaleString()
-                  : '-'}
-              </div>
-              <div className="min-w-0 truncate">
-                上次结束：{metadataString(paperAnalysisTask, 'last_run_finished_at')
-                  ? new Date(metadataString(paperAnalysisTask, 'last_run_finished_at') as string).toLocaleString()
-                  : '-'}
-              </div>
-            </div>
+            )}
           </div>
 
           <div className="flex h-full flex-col rounded-[24px] border border-[#e5eaf2] bg-white p-3.5">

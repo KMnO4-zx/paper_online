@@ -8,8 +8,8 @@ import { PaperReadFilterBar } from '@/components/paper-read-filter-bar';
 import { SearchControls } from '@/components/search-controls';
 import { fetchHfDailyPapers } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
-import { applyReadFilter, buildQueryString, navigate, parseFilters, parsePage, parseReadFilter, useAppLocation } from '@/lib/router';
-import type { Paper, PaperListResponse, PaperReadFilter, SearchFilters } from '@/types';
+import { applyCodeFilter, applyReadFilter, buildQueryString, navigate, parseCodeFilter, parseFilters, parsePage, parseReadFilter, useAppLocation } from '@/lib/router';
+import type { Paper, PaperCodeFilter, PaperListResponse, PaperReadFilter, SearchFilters } from '@/types';
 
 const EMPTY_RESULTS: PaperListResponse = {
   papers: [],
@@ -210,13 +210,14 @@ export function HfDailyPage() {
   const location = useAppLocation();
   const { user, isLoading: isAuthLoading } = useAuth();
   const listRef = useRef<HTMLDivElement | null>(null);
-  const { query, page, filters, readFilter } = useMemo(() => {
+  const { query, page, filters, readFilter, codeFilter } = useMemo(() => {
     const params = new URLSearchParams(location.search);
     return {
       query: params.get('q') ?? '',
       page: parsePage(params.get('page')),
       filters: parseFilters(params),
       readFilter: parseReadFilter(params.get('read')),
+      codeFilter: parseCodeFilter(params.get('code')),
     };
   }, [location.search]);
 
@@ -244,7 +245,7 @@ export function HfDailyPage() {
     setError(null);
     const effectiveReadFilter = user ? readFilter : 'all';
 
-    void fetchHfDailyPapers(page, query, filters, effectiveReadFilter)
+    void fetchHfDailyPapers(page, query, filters, effectiveReadFilter, codeFilter)
       .then((payload) => {
         if (active) {
           setResults(payload);
@@ -265,7 +266,7 @@ export function HfDailyPage() {
     return () => {
       active = false;
     };
-  }, [isAuthLoading, page, query, filters, readFilter, refreshVersion, user]);
+  }, [codeFilter, isAuthLoading, page, query, filters, readFilter, refreshVersion, user]);
 
   useEffect(() => {
     setActiveDate(timelineItems[0]?.date ?? null);
@@ -330,6 +331,7 @@ export function HfDailyPage() {
       next.set('keywords', String(draftFilters.keywords));
     }
     applyReadFilter(next, user ? readFilter : 'all');
+    applyCodeFilter(next, codeFilter);
     navigate(`/hf-daily${buildQueryString(next)}`);
   };
 
@@ -342,6 +344,13 @@ export function HfDailyPage() {
   const onReadFilterChange = (nextReadFilter: PaperReadFilter) => {
     const next = new URLSearchParams(location.search);
     applyReadFilter(next, nextReadFilter);
+    next.delete('page');
+    navigate(`/hf-daily${buildQueryString(next)}`);
+  };
+
+  const onCodeFilterChange = (nextCodeFilter: PaperCodeFilter) => {
+    const next = new URLSearchParams(location.search);
+    applyCodeFilter(next, nextCodeFilter);
     next.delete('page');
     navigate(`/hf-daily${buildQueryString(next)}`);
   };
@@ -400,8 +409,10 @@ export function HfDailyPage() {
             <PaperReadFilterBar
               value={activeReadFilter}
               counts={results.read_counts}
+              codeValue={codeFilter}
               disabled={!user || isAuthLoading}
               onChange={onReadFilterChange}
+              onCodeChange={onCodeFilterChange}
             />
           </div>
 

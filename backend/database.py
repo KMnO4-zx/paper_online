@@ -23,6 +23,8 @@ _conference_cache = {}
 _cache_timestamp = {}
 _CACHE_TTL_SECONDS = 86400
 _READ_FILTER_SEARCH_LIMIT = 1_000_000
+CODE_AVAILABILITY_STATUSES = {"open_source", "unavailable", "not_found", "unknown"}
+CODE_FILTERS = CODE_AVAILABILITY_STATUSES | {"all", "not_open_source"}
 
 
 class DatabaseError(Exception):
@@ -182,6 +184,10 @@ def _paper_from_arxiv_row(row: dict) -> dict:
         "primary_area": row.get("primary_area"),
         "llm_response": row.get("llm_response"),
         "created_at": row.get("created_at"),
+        "code_status": row.get("code_status") or "unknown",
+        "code_url": row.get("code_url"),
+        "code_evidence": row.get("code_evidence"),
+        "code_checked_at": row.get("code_checked_at"),
         "arxiv": _arxiv_meta_from_row(
             {
                 "arxiv_id": row.get("arxiv_id"),
@@ -503,6 +509,14 @@ def upsert_hf_daily_papers(daily_date: date, entries: list[dict]) -> list[str]:
                     daily_info = entry["daily"]
                     paper_id = paper_info["id"]
                     normalized_pdf = normalize_paper_pdf_url(paper_id, paper_info.get("pdf"))
+                    github_repo = daily_info.get("github_repo")
+                    has_github_repo = bool(github_repo)
+                    code_status = "open_source" if has_github_repo else "unknown"
+                    code_evidence = (
+                        "Hugging Face Daily metadata includes a GitHub repository."
+                        if has_github_repo
+                        else None
+                    )
 
                     cur.execute(
                         """
@@ -513,16 +527,41 @@ def upsert_hf_daily_papers(daily_date: date, entries: list[dict]) -> list[str]:
                             keywords,
                             pdf,
                             venue,
-                            primary_area
+                            primary_area,
+                            code_status,
+                            code_url,
+                            code_evidence,
+                            code_meta,
+                            code_checked_at
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, CASE WHEN %s THEN NOW() ELSE NULL END)
                         ON CONFLICT (id) DO UPDATE SET
                             title = EXCLUDED.title,
                             abstract = EXCLUDED.abstract,
                             keywords = EXCLUDED.keywords,
                             pdf = EXCLUDED.pdf,
                             venue = EXCLUDED.venue,
-                            primary_area = EXCLUDED.primary_area
+                            primary_area = EXCLUDED.primary_area,
+                            code_status = CASE
+                                WHEN EXCLUDED.code_status = 'open_source' THEN EXCLUDED.code_status
+                                ELSE papers.code_status
+                            END,
+                            code_url = CASE
+                                WHEN EXCLUDED.code_status = 'open_source' THEN EXCLUDED.code_url
+                                ELSE papers.code_url
+                            END,
+                            code_evidence = CASE
+                                WHEN EXCLUDED.code_status = 'open_source' THEN EXCLUDED.code_evidence
+                                ELSE papers.code_evidence
+                            END,
+                            code_meta = CASE
+                                WHEN EXCLUDED.code_status = 'open_source' THEN EXCLUDED.code_meta
+                                ELSE papers.code_meta
+                            END,
+                            code_checked_at = CASE
+                                WHEN EXCLUDED.code_status = 'open_source' THEN EXCLUDED.code_checked_at
+                                ELSE papers.code_checked_at
+                            END
                         RETURNING llm_response
                         """,
                         (
@@ -533,6 +572,11 @@ def upsert_hf_daily_papers(daily_date: date, entries: list[dict]) -> list[str]:
                             normalized_pdf,
                             paper_info.get("venue"),
                             paper_info.get("primary_area"),
+                            code_status,
+                            github_repo if has_github_repo else None,
+                            code_evidence,
+                            Jsonb({"source": "hf_daily", "github_repo": github_repo} if has_github_repo else {}),
+                            has_github_repo,
                         ),
                     )
                     paper_row = cur.fetchone()
@@ -634,6 +678,112 @@ def update_llm_response(paper_id: str, response: str):
             conn.commit()
 
     _run_with_retry(operation, f"update_llm_response:{paper_id}")
+
+
+def update_paper_code_availability(
+    paper_id: str,
+    status: str,
+    code_url: str | None = None,
+    evidence: str | None = None,
+    meta: dict | None = None,
+) -> None:
+    if not DATABASE_URL:
+        return
+    normalized_status = status if status in CODE_AVAILABILITY_STATUSES else "unknown"
+
+    def operation() -> None:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE papers
+                    SET code_status = %s,
+                        code_url = %s,
+                        code_evidence = %s,
+                        code_meta = %s,
+                        code_checked_at = NOW()
+                    WHERE id = %s
+                    """,
+                    (
+                        normalized_status,
+                        code_url if normalized_status == "open_source" else None,
+                        evidence,
+                        Jsonb(meta or {}),
+                        paper_id,
+                    ),
+                )
+            conn.commit()
+
+        _conference_cache.clear()
+        _cache_timestamp.clear()
+
+    _run_with_retry(operation, f"update_paper_code_availability:{paper_id}")
+
+
+def get_papers_pending_code_availability(limit: int = 10) -> list:
+    if not DATABASE_URL:
+        return []
+
+    def operation() -> list:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT id, title, venue, llm_response
+                    FROM papers
+                    WHERE llm_response IS NOT NULL
+                      AND BTRIM(llm_response) <> ''
+                      AND code_checked_at IS NULL
+                    ORDER BY created_at NULLS FIRST, id
+                    LIMIT %s
+                    """,
+                    (limit,),
+                )
+                return cur.fetchall()
+
+    return _run_with_retry(operation, f"get_papers_pending_code_availability:{limit}")
+
+
+def count_pending_code_availability() -> int:
+    if not DATABASE_URL:
+        return 0
+
+    def operation() -> int:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM papers
+                    WHERE llm_response IS NOT NULL
+                      AND BTRIM(llm_response) <> ''
+                      AND code_checked_at IS NULL
+                    """
+                )
+                row = cur.fetchone()
+                return int(row["total"] or 0)
+
+    return _run_with_retry(operation, "count_pending_code_availability")
+
+
+def count_unchecked_code_availability() -> int:
+    if not DATABASE_URL:
+        return 0
+
+    def operation() -> int:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM papers
+                    WHERE code_checked_at IS NULL
+                    """
+                )
+                row = cur.fetchone()
+                return int(row["total"] or 0)
+
+    return _run_with_retry(operation, "count_unchecked_code_availability")
 
 
 def create_user(
@@ -2370,11 +2520,12 @@ def _build_cache_key(
     search_title: bool,
     search_abstract: bool,
     search_keywords: bool,
+    code_filter: str = "all",
 ) -> str:
     scope = venue_prefix if venue_prefix is not None else "all"
     return (
         f"{scope}:{offset}:{limit}:{search or ''}:"
-        f"{search_title}:{search_abstract}:{search_keywords}"
+        f"{search_title}:{search_abstract}:{search_keywords}:{code_filter}"
     )
 
 
@@ -2420,6 +2571,18 @@ def _read_counts_payload(total: object, read_total: object) -> dict[str, int]:
         "unread": max(total_count - read_count, 0),
         "read": read_count,
     }
+
+
+def _paper_code_filter_clause(code_filter: str = "all", paper_alias: str = "p") -> str:
+    if code_filter == "all":
+        return ""
+    if code_filter == "open_source":
+        return f"{paper_alias}.code_status = 'open_source'"
+    if code_filter == "not_open_source":
+        return f"COALESCE({paper_alias}.code_status, 'unknown') <> 'open_source'"
+    if code_filter in CODE_AVAILABILITY_STATUSES:
+        return f"{paper_alias}.code_status = '{code_filter}'"
+    raise ValueError(f"unsupported code_filter: {code_filter}")
 
 
 def _paper_read_filter_clause(
@@ -2496,6 +2659,7 @@ def _search_papers_via_rpc(
     search_title: bool,
     search_abstract: bool,
     search_keywords: bool,
+    code_filter: str = "all",
 ) -> tuple[list[dict], int]:
     def operation() -> tuple[list[dict], int]:
         with _get_connection() as conn:
@@ -2503,7 +2667,7 @@ def _search_papers_via_rpc(
                 cur.execute(
                     """
                     SELECT *
-                    FROM search_papers_optimized(%s, %s, %s, %s, %s, %s, %s)
+                    FROM search_papers_optimized(%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     (
                         search,
@@ -2511,6 +2675,7 @@ def _search_papers_via_rpc(
                         search_title,
                         search_abstract,
                         search_keywords,
+                        code_filter,
                         limit,
                         offset,
                     ),
@@ -2520,7 +2685,7 @@ def _search_papers_via_rpc(
 
                 cur.execute(
                     """
-                    SELECT count_papers_optimized(%s, %s, %s, %s, %s) AS total
+                    SELECT count_papers_optimized(%s, %s, %s, %s, %s, %s) AS total
                     """,
                     (
                         search,
@@ -2528,6 +2693,7 @@ def _search_papers_via_rpc(
                         search_title,
                         search_abstract,
                         search_keywords,
+                        code_filter,
                     ),
                 )
                 row = cur.fetchone()
@@ -2602,6 +2768,7 @@ def _search_papers_legacy(
     search_title: bool,
     search_abstract: bool,
     search_keywords: bool,
+    code_filter: str = "all",
 ) -> tuple[list[dict], int]:
     normalized_search = (search or "").casefold()
     matched_keyword_paper_ids: set[str] = set()
@@ -2623,9 +2790,15 @@ def _search_papers_legacy(
 
             query = "SELECT * FROM papers"
             params: list[object] = []
+            where_parts: list[str] = []
             if venue_prefix:
-                query += " WHERE venue ILIKE %s"
+                where_parts.append("venue ILIKE %s")
                 params.append(f"{venue_prefix}%")
+            code_clause = _paper_code_filter_clause(code_filter, "papers")
+            if code_clause:
+                where_parts.append(code_clause)
+            if where_parts:
+                query += f" WHERE {' AND '.join(where_parts)}"
             cur.execute(query, params)
             all_papers = cur.fetchall()
 
@@ -2674,6 +2847,7 @@ def _search_papers(
     search_title: bool,
     search_abstract: bool,
     search_keywords: bool,
+    code_filter: str = "all",
 ) -> tuple[list[dict], int]:
     if not DATABASE_URL:
         return [], 0
@@ -2682,7 +2856,7 @@ def _search_papers(
         return [], 0
 
     cache_key = _build_cache_key(
-        venue_prefix, offset, limit, search, search_title, search_abstract, search_keywords
+        venue_prefix, offset, limit, search, search_title, search_abstract, search_keywords, code_filter
     )
     cached_result = _get_cached_result(cache_key)
     if cached_result is not None:
@@ -2697,6 +2871,7 @@ def _search_papers(
             search_title,
             search_abstract,
             search_keywords,
+            code_filter,
         )
     except Exception as exc:
         logger.warning(
@@ -2713,6 +2888,7 @@ def _search_papers(
             search_title,
             search_abstract,
             search_keywords,
+            code_filter,
         )
 
     _set_cached_result(cache_key, papers, total)
@@ -2729,6 +2905,7 @@ def _search_papers_with_read_filter(
     search_keywords: bool,
     user_id: str,
     read_status: str,
+    code_filter: str = "all",
 ) -> tuple[list[dict], int]:
     if read_status == "all":
         return _search_papers(
@@ -2739,6 +2916,7 @@ def _search_papers_with_read_filter(
             search_title,
             search_abstract,
             search_keywords,
+            code_filter,
         )
     if search and not (search_title or search_abstract or search_keywords):
         return [], 0
@@ -2754,6 +2932,7 @@ def _search_papers_with_read_filter(
                     search_title,
                     search_abstract,
                     search_keywords,
+                    code_filter,
                     _READ_FILTER_SEARCH_LIMIT,
                     0,
                 ]
@@ -2761,7 +2940,7 @@ def _search_papers_with_read_filter(
                     f"""
                     WITH scoped_papers AS (
                         SELECT ROW_NUMBER() OVER () AS scoped_order, *
-                        FROM search_papers_optimized(%s, %s, %s, %s, %s, %s, %s)
+                        FROM search_papers_optimized(%s, %s, %s, %s, %s, %s, %s, %s)
                     )
                     SELECT p.id,
                            p.title,
@@ -2769,7 +2948,11 @@ def _search_papers_with_read_filter(
                            p.venue,
                            p.primary_area,
                            p.llm_response,
-                           p.created_at
+                           p.created_at,
+                           p.code_status,
+                           p.code_url,
+                           p.code_evidence,
+                           p.code_checked_at
                     FROM scoped_papers p
                     WHERE {read_clause}
                     ORDER BY p.scoped_order
@@ -2784,7 +2967,7 @@ def _search_papers_with_read_filter(
                     f"""
                     WITH scoped_papers AS (
                         SELECT *
-                        FROM search_papers_optimized(%s, %s, %s, %s, %s, %s, %s)
+                        FROM search_papers_optimized(%s, %s, %s, %s, %s, %s, %s, %s)
                     )
                     SELECT COUNT(*) AS total
                     FROM scoped_papers p
@@ -2806,6 +2989,7 @@ def count_search_paper_read_states(
     search_abstract: bool,
     search_keywords: bool,
     user_id: str,
+    code_filter: str = "all",
 ) -> dict[str, int]:
     if not DATABASE_URL:
         return _read_counts_payload(0, 0)
@@ -2819,7 +3003,7 @@ def count_search_paper_read_states(
                     cur,
                     """
                     SELECT id
-                    FROM search_papers_optimized(%s, %s, %s, %s, %s, %s, %s)
+                    FROM search_papers_optimized(%s, %s, %s, %s, %s, %s, %s, %s)
                     """,
                     [
                         search,
@@ -2827,6 +3011,7 @@ def count_search_paper_read_states(
                         search_title,
                         search_abstract,
                         search_keywords,
+                        code_filter,
                         _READ_FILTER_SEARCH_LIMIT,
                         0,
                     ],
@@ -2846,6 +3031,7 @@ def get_conference_papers(
     search_keywords: bool = True,
     user_id: str | None = None,
     read_status: str = "all",
+    code_filter: str = "all",
 ):
     if read_status != "all":
         return _search_papers_with_read_filter(
@@ -2858,6 +3044,7 @@ def get_conference_papers(
             search_keywords,
             user_id or "",
             read_status,
+            code_filter,
         )
 
     return _search_papers(
@@ -2868,6 +3055,7 @@ def get_conference_papers(
         search_title,
         search_abstract,
         search_keywords,
+        code_filter,
     )
 
 
@@ -2880,6 +3068,7 @@ def search_all_papers(
     search_keywords: bool = True,
     user_id: str | None = None,
     read_status: str = "all",
+    code_filter: str = "all",
 ):
     if read_status != "all":
         return _search_papers_with_read_filter(
@@ -2892,6 +3081,7 @@ def search_all_papers(
             search_keywords,
             user_id or "",
             read_status,
+            code_filter,
         )
 
     return _search_papers(
@@ -2902,6 +3092,7 @@ def search_all_papers(
         search_title,
         search_abstract,
         search_keywords,
+        code_filter,
     )
 
 
@@ -2929,6 +3120,10 @@ def _paper_from_hf_daily_row(row: dict) -> dict:
         "primary_area": row.get("primary_area"),
         "llm_response": row.get("llm_response"),
         "created_at": row.get("created_at"),
+        "code_status": row.get("code_status") or "unknown",
+        "code_url": row.get("code_url"),
+        "code_evidence": row.get("code_evidence"),
+        "code_checked_at": row.get("code_checked_at"),
         "hf_daily": {
             "daily_date": row.get("hf_daily_date"),
             "rank": row.get("hf_daily_rank"),
@@ -3047,6 +3242,7 @@ def get_hf_daily_papers(
     search_keywords: bool = True,
     user_id: str | None = None,
     read_status: str = "all",
+    code_filter: str = "all",
 ) -> tuple[list[dict], int]:
     if not DATABASE_URL:
         return [], 0
@@ -3078,6 +3274,10 @@ def get_hf_daily_papers(
                 )
                 params.append(f"%{search}%")
             base_where_parts.append(f"({' OR '.join(search_parts)})")
+
+        code_clause = _paper_code_filter_clause(code_filter, "p")
+        if code_clause:
+            base_where_parts.append(code_clause)
 
         read_clause, read_params = _paper_read_filter_clause(user_id, read_status, "p")
         list_where_parts = [*base_where_parts]
@@ -3140,6 +3340,10 @@ def get_hf_daily_papers(
         papers: list[dict] = []
         for row in rows:
             paper = dict(row)
+            paper["code_status"] = paper.get("code_status") or "unknown"
+            paper.setdefault("code_url", None)
+            paper.setdefault("code_evidence", None)
+            paper.setdefault("code_checked_at", None)
             paper["hf_daily"] = {
                 "daily_date": paper.pop("hf_daily_date", None),
                 "rank": paper.pop("hf_daily_rank", None),
@@ -3165,6 +3369,7 @@ def count_hf_daily_paper_read_states(
     search_abstract: bool,
     search_keywords: bool,
     user_id: str,
+    code_filter: str = "all",
 ) -> dict[str, int]:
     if not DATABASE_URL:
         return _read_counts_payload(0, 0)
@@ -3196,6 +3401,10 @@ def count_hf_daily_paper_read_states(
                 params.append(f"%{search}%")
             where_parts.append(f"({' OR '.join(search_parts)})")
 
+        code_clause = _paper_code_filter_clause(code_filter, "p")
+        if code_clause:
+            where_parts.append(code_clause)
+
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         with _get_connection() as conn:
             with conn.cursor() as cur:
@@ -3224,6 +3433,7 @@ def get_arxiv_papers(
     search_keywords: bool = True,
     user_id: str | None = None,
     read_status: str = "all",
+    code_filter: str = "all",
 ) -> tuple[list[dict], int]:
     if not DATABASE_URL:
         return [], 0
@@ -3257,6 +3467,9 @@ def get_arxiv_papers(
                 )
                 params.append(f"%{search}%")
             where_parts.append(f"({' OR '.join(search_parts)})")
+        code_clause = _paper_code_filter_clause(code_filter, "p")
+        if code_clause:
+            where_parts.append(code_clause)
         read_clause, read_params = _paper_read_filter_clause(user_id, read_status, "p")
         if read_clause:
             where_parts.append(read_clause)
@@ -3310,6 +3523,7 @@ def count_arxiv_paper_read_states(
     search_abstract: bool,
     search_keywords: bool,
     user_id: str,
+    code_filter: str = "all",
 ) -> dict[str, int]:
     if not DATABASE_URL:
         return _read_counts_payload(0, 0)
@@ -3342,6 +3556,10 @@ def count_arxiv_paper_read_states(
                 )
                 params.append(f"%{search}%")
             where_parts.append(f"({' OR '.join(search_parts)})")
+
+        code_clause = _paper_code_filter_clause(code_filter, "p")
+        if code_clause:
+            where_parts.append(code_clause)
 
         where_clause = f"WHERE {' AND '.join(where_parts)}" if where_parts else ""
         with _get_connection() as conn:
@@ -3402,6 +3620,21 @@ def count_unanalyzed_papers() -> int:
                 return int(row["total"] or 0)
 
     return _run_with_retry(operation, "count_unanalyzed_papers")
+
+
+def count_papers() -> int:
+    """Count all papers in the library."""
+    if not DATABASE_URL:
+        return 0
+
+    def operation() -> int:
+        with _get_connection() as conn:
+            with conn.cursor() as cur:
+                cur.execute("SELECT COUNT(*) AS total FROM papers")
+                row = cur.fetchone()
+                return int(row["total"] or 0)
+
+    return _run_with_retry(operation, "count_papers")
 
 
 def record_presence(

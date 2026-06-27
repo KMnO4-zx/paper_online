@@ -7,9 +7,9 @@ import { PaperCard } from '@/components/paper-card';
 import { PaperReadFilterBar } from '@/components/paper-read-filter-bar';
 import { SearchControls } from '@/components/search-controls';
 import { fetchSearchPapers } from '@/lib/api';
-import { applyReadFilter, buildQueryString, navigate, parseFilters, parsePage, parseReadFilter, useAppLocation } from '@/lib/router';
+import { applyCodeFilter, applyReadFilter, buildQueryString, navigate, parseCodeFilter, parseFilters, parsePage, parseReadFilter, useAppLocation } from '@/lib/router';
 import { useAuth } from '@/lib/auth';
-import type { PaperListResponse, PaperReadFilter, SearchFilters } from '@/types';
+import type { PaperCodeFilter, PaperListResponse, PaperReadFilter, SearchFilters } from '@/types';
 
 const EMPTY_RESULTS: PaperListResponse = {
   papers: [],
@@ -21,13 +21,14 @@ const EMPTY_RESULTS: PaperListResponse = {
 export function SearchPage() {
   const location = useAppLocation();
   const { user, isLoading: isAuthLoading } = useAuth();
-  const { query, page, filters, readFilter } = useMemo(() => {
+  const { query, page, filters, readFilter, codeFilter } = useMemo(() => {
     const params = new URLSearchParams(location.search);
     return {
       query: params.get('q') ?? '',
       page: parsePage(params.get('page')),
       filters: parseFilters(params),
       readFilter: parseReadFilter(params.get('read')),
+      codeFilter: parseCodeFilter(params.get('code')),
     };
   }, [location.search]);
   const [draftQuery, setDraftQuery] = useState(query);
@@ -58,7 +59,7 @@ export function SearchPage() {
     setError(null);
     const effectiveReadFilter = user ? readFilter : 'all';
 
-    void fetchSearchPapers(page, query, filters, effectiveReadFilter)
+    void fetchSearchPapers(page, query, filters, effectiveReadFilter, codeFilter)
       .then((payload) => {
         if (active) {
           setResults(payload);
@@ -79,7 +80,7 @@ export function SearchPage() {
     return () => {
       active = false;
     };
-  }, [isAuthLoading, page, query, filters, readFilter, refreshVersion, user]);
+  }, [codeFilter, isAuthLoading, page, query, filters, readFilter, refreshVersion, user]);
 
   const submitSearch = () => {
     if (!draftQuery.trim()) {
@@ -93,6 +94,7 @@ export function SearchPage() {
     next.set('abstract', String(draftFilters.abstract));
     next.set('keywords', String(draftFilters.keywords));
     applyReadFilter(next, user ? readFilter : 'all');
+    applyCodeFilter(next, codeFilter);
     navigate(`/search${buildQueryString(next)}`);
   };
 
@@ -105,6 +107,13 @@ export function SearchPage() {
   const onReadFilterChange = (nextReadFilter: PaperReadFilter) => {
     const next = new URLSearchParams(location.search);
     applyReadFilter(next, nextReadFilter);
+    next.delete('page');
+    navigate(`/search${buildQueryString(next)}`);
+  };
+
+  const onCodeFilterChange = (nextCodeFilter: PaperCodeFilter) => {
+    const next = new URLSearchParams(location.search);
+    applyCodeFilter(next, nextCodeFilter);
     next.delete('page');
     navigate(`/search${buildQueryString(next)}`);
   };
@@ -146,8 +155,10 @@ export function SearchPage() {
             <PaperReadFilterBar
               value={activeReadFilter}
               counts={results.read_counts}
+              codeValue={codeFilter}
               disabled={!user || isAuthLoading}
               onChange={onReadFilterChange}
+              onCodeChange={onCodeFilterChange}
             />
           </div>
           <div className="mt-4 rounded-[28px] bg-white/70 p-4 text-sm text-[#596579] shadow-sm ring-1 ring-black/5">
