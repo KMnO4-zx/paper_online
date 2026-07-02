@@ -3580,7 +3580,7 @@ def count_arxiv_paper_read_states(
 
 
 def get_unanalyzed_papers(limit: int = 10) -> list:
-    """获取未分析的论文（llm_response IS NULL）"""
+    """获取未分析的论文（llm_response 为空或 NULL）"""
     if not DATABASE_URL:
         return []
 
@@ -3592,6 +3592,7 @@ def get_unanalyzed_papers(limit: int = 10) -> list:
                     SELECT id, title, venue
                     FROM papers
                     WHERE llm_response IS NULL
+                       OR BTRIM(llm_response) = ''
                     LIMIT %s
                     """,
                     (limit,),
@@ -3614,6 +3615,7 @@ def count_unanalyzed_papers() -> int:
                     SELECT COUNT(*) AS total
                     FROM papers
                     WHERE llm_response IS NULL
+                       OR BTRIM(llm_response) = ''
                     """
                 )
                 row = cur.fetchone()

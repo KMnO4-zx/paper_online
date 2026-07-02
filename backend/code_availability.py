@@ -38,6 +38,17 @@ def _extract_json_object(raw_text: str) -> dict[str, Any]:
     return parsed
 
 
+def _is_provider_content_block_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    text = str(exc).lower()
+    return (
+        status_code == 451
+        or "censorship_blocked" in text
+        or "unavailable for legal reasons" in text
+        or "content you provided or machine outputted is blocked" in text
+    )
+
+
 def normalize_code_availability_result(raw_result: dict[str, Any]) -> dict[str, Any]:
     status = normalize_code_availability_status(raw_result.get("status"))
     code_url = normalize_code_url(raw_result.get("code_url"))
@@ -90,14 +101,29 @@ async def classify_code_availability_from_text(
         ]
     )
 
-    raw_response = await llm.chat(
-        [
-            {"role": "system", "content": CODE_AVAILABILITY_PROMPT},
-            {"role": "user", "content": user_prompt},
-        ],
-        temperature=0,
-        _usage_context="code_availability",
-    )
+    try:
+        raw_response = await llm.chat(
+            [
+                {"role": "system", "content": CODE_AVAILABILITY_PROMPT},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=0,
+            _usage_context="code_availability",
+        )
+    except Exception as exc:
+        if not _is_provider_content_block_error(exc):
+            raise
+        return {
+            "status": "unknown",
+            "code_url": None,
+            "evidence": "代码开源状态判断被当前 LLM 服务商内容策略拦截。",
+            "meta": {
+                "confidence": 0.0,
+                "reason": "provider_content_blocked",
+                "source": source,
+                "provider_error": str(exc)[:2000],
+            },
+        }
 
     try:
         parsed = _extract_json_object(raw_response or "")

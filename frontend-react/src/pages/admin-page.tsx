@@ -808,8 +808,9 @@ export function AdminPage() {
                   const isPaperAnalysisTask = task.id === 'paper_analysis';
                   const isCodeAvailabilityTask = task.id === 'code_availability';
                   const totalCount = metadataNumber(task, 'total_paper_count') ?? paperLibraryTotal;
+                  const uncheckedCodeCount = metadataNumber(task, 'unchecked_code_availability_count');
                   const pendingCount = isCodeAvailabilityTask
-                    ? metadataNumber(task, 'unchecked_code_availability_count') ?? metadataNumber(task, 'pending_code_availability_count')
+                    ? metadataNumber(task, 'pending_code_availability_count') ?? uncheckedCodeCount
                     : metadataNumber(task, 'unanalyzed_count');
                   const pendingLabel = isCodeAvailabilityTask ? '待判断代码' : '待分析论文';
                   const currentLabel = isCodeAvailabilityTask ? '当前判断' : '当前处理';
@@ -935,6 +936,11 @@ export function AdminPage() {
                         <div className="mt-3 rounded-2xl bg-[#f8fafc] px-3.5 py-3 text-sm text-[#728095] ring-1 ring-[#e5eaf2]">
                           <span className="font-medium text-[#475569]">当前间隔：</span>
                           {formatDuration(metadataNumber(task, 'check_interval_seconds'))}
+                          {isCodeAvailabilityTask && typeof uncheckedCodeCount === 'number' ? (
+                            <span className="ml-3 inline-flex rounded-full bg-white px-2 py-0.5 text-xs font-medium text-[#64748b] ring-1 ring-[#e5eaf2]">
+                              未检查总数 {formatTokenCount(uncheckedCodeCount)}
+                            </span>
+                          ) : null}
                         </div>
                       )}
 

@@ -84,7 +84,7 @@ def test_write_background_analysis_config_replaces_existing_section(tmp_path, mo
     assert "hf_daily:\n  enabled: true" in updated
 
 
-def test_count_unanalyzed_papers_counts_null_llm_responses(monkeypatch):
+def test_count_unanalyzed_papers_counts_blank_llm_responses(monkeypatch):
     cursor = FakeCursor()
 
     @contextmanager
@@ -100,6 +100,7 @@ def test_count_unanalyzed_papers_counts_null_llm_responses(monkeypatch):
     sql, params = cursor.calls[0]
     assert "COUNT(*) AS total" in sql
     assert "llm_response IS NULL" in sql
+    assert "BTRIM(llm_response) = ''" in sql
     assert params is None
 
 
